@@ -1,0 +1,91 @@
+# configs/config.yaml
+
+server:
+  host: "0.0.0.0"
+  grpc_port: 50051
+  metrics_port: 9090
+
+mysql:
+  host: "localhost"
+  port: 3306
+  database: "user_service"
+  username: "root"
+  password: "root123"
+  pool_size: 10
+  
+  # 超时配置（毫秒）
+  connection_timeout_ms: 5000
+  # read_timeout_ms: 30000
+  # write_timeout_ms: 30000
+  
+  # # 重试配置
+  # max_retries: 3
+  # retry_interval_ms: 1000
+  
+  # # 其他配置
+  # auto_reconnect: true
+  charset: "utf8mb4"
+
+redis:
+  host: "localhost"
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 5
+  # connect_timeout_ms: 0
+  # socket_timeout_ms: 0
+  
+kafka:
+  # ============ 基础连接 ============
+  brokers: "localhost:9092"
+  client_id: "user-service"
+  user_events: "user-events"
+
+  # ============ Producer 配置 ============
+  producer:
+    acks: "all"                          # 最高可靠性
+    enable_idempotence: true             # 幂等性，防重复
+    retries: 5                           # 重试次数
+    retry_backoff_ms: 200                # 重试间隔
+    delivery_timeout_ms: 60000           # 投递总超时 60s
+    
+    batch_size: 65536                    # 批次大小 64KB
+    linger_ms: 5                         # 批量等待 5ms
+    compression_codec: "lz4"             # 压缩算法
+    
+    queue_buffering_max_messages: 100000 # 本地队列最大消息数
+    queue_buffering_max_kbytes: 1048576  # 本地队列最大 1GB
+
+  # ============ Consumer 配置 ============
+  consumer:
+    group_id: "user-service-group"
+    auto_offset_reset: "earliest"        # 从最早开始消费
+    enable_auto_commit: false            # 手动提交（推荐）
+    
+    max_poll_records: 500                # 单次拉取最大消息数
+    session_timeout_ms: 45000            # 会话超时 45s
+    heartbeat_interval_ms: 3000          # 心跳间隔 3s
+
+  # ============ 网络配置 ============
+  network:
+    socket_timeout_ms: 60000
+    reconnect_backoff_ms: 100
+    reconnect_backoff_max_ms: 10000
+
+zookeeper:
+  hosts: "localhost:2181"
+  session_timeout_ms: 30000
+  service_path: "/services/user-service"
+
+security:
+  jwt_secret: "your-super-secret-key-change-in-production"
+  token_ttl: 900  # 15分钟
+  refresh_token_ttl: 604800 # 7天
+
+log:
+  level: "trace"
+  path: "./logs"
+  filename: "user-service.log"
+  max_size: 10485760  # 10MB
+  max_files: 5
+  console_output: true

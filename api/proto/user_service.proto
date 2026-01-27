@@ -1,0 +1,195 @@
+syntax = "proto3";
+
+package user_service; //用户领域的 CRUD 核心功能 + 认证授权辅助功能
+
+//导入标准库依赖，解决外部类型依赖问题
+import "google/protobuf/timestamp.proto";   //时间戳类型，用于记录创建 / 更新时间；
+import "google/protobuf/empty.proto";       //空类型，用于无返回业务数据的响应；
+
+import "google/protobuf/wrappers.proto";    //提供 BoolValue/StringValue 等包装类型，
+                                            //解决原生类型无法区分 “未设置” 和 “默认值” 的问题。
+
+enum ErrorCode {
+    // ========== 成功 ==========
+    OK = 0;
+
+    // ==================== 通用错误（100~999） ====================
+    UNKNOWN             = 100;  // 未知错误
+    INTERNAL            = 101;  // 内部服务器异常
+    NOT_IMPLEMENTED     = 102;  // 功能未实现
+    SERVICE_UNAVAILABLE = 103;  // 服务不可用
+    TIMEOUT             = 104;  // 请求超时
+
+    INVALID_ARGUMENT    = 200;  // 参数无效
+    MISSING_REQUIRED    = 201;  // 缺少必要参数
+    INVALID_FORMAT      = 202;  // 格式错误
+    VALUE_TOO_LONG      = 203;  // 值过长
+    VALUE_TOO_SHORT     = 204;  // 值过短
+    INVALID_PAGE        = 210;  // 无效的分页参数
+    INVALID_PAGE_SIZE   = 211;  // 无效的分页大小
+
+    RATE_LIMITED        = 300;  // 请求过于频繁
+    QUOTA_EXCEEDED      = 301;  // 配额超限
+
+    // ==================== 认证错误（1000~1999） ====================
+    UNAUTHENTICATED     = 1000; // 未认证
+    TOKEN_MISSING       = 1001; // Token 缺失
+    TOKEN_INVALID       = 1002; // Token 无效
+    TOKEN_EXPIRED       = 1003; // Token 已过期
+    TOKEN_REVOKED       = 1004; // Token 已注销
+
+    LOGIN_FAILED        = 1010; // 登录失败
+    WRONG_PASSWORD      = 1011; // 密码错误
+    ACCOUNT_LOCKED      = 1012; // 账号已锁定
+    NEED_CAPTCHA        = 1020; // 需要验证码
+    CAPTCHA_WRONG       = 1021; // 验证码错误
+
+    // ==================== 用户错误（2000~2999） ====================
+    USER_NOT_FOUND      = 2000; // 用户不存在
+    USER_DELETED        = 2001; // 用户已删除
+    USER_ALREADY_EXISTS = 2010; // 用户已存在
+    USERNAME_TAKEN      = 2011; // 用户名已被占用
+    EMAIL_TAKEN         = 2012; // 邮箱已被占用
+    MOBILE_TAKEN        = 2013; // 手机号已被占用
+    USER_DISABLED       = 2020; // 用户已禁用
+    USER_NOT_VERIFIED   = 2021; // 用户未验证
+    INVALID_USERNAME    = 2030; // 用户名格式无效
+    INVALID_EMAIL       = 2031; // 邮箱格式无效
+    INVALID_MOBILE      = 2032; // 手机号格式无效
+    INVALID_PASSWORD    = 2033; // 密码不符合要求
+    PASSWORD_TOO_WEAK   = 2034; // 密码强度不足
+
+    // ==================== 权限错误（3000~3999） ====================
+    PERMISSION_DENIED   = 3000; // 无权限
+    ADMIN_REQUIRED      = 3001; // 需要管理员权限
+    OWNER_REQUIRED      = 3002; // 需要是资源所有者
+}
+
+message Result{
+    ErrorCode   code=1;
+    string      msg=2;
+}
+
+
+// 分页请求：客户端传递分页参数（分页查询）
+// 如有1000个用户，每页可以显示50个用户，共20页，就可以指定查询第几页多少用户了
+message PageRequest {
+    int32 page = 1;    // 当前页，从 1 开始（符合业务侧使用习惯，避免 0 页的歧义）
+    int32 page_size   = 2;    // 每页条数（如 10/20/50）
+}
+
+// 分页响应元数据
+message PageResponse {
+    Result result       = 1;
+    int64 total_records = 2;  // 总记录数（服务端查的）
+    int32 total_pages   = 3;  // 总页数（服务端算的）
+    int32 page          = 4;  // 当前页
+    int32 page_size     = 5;  // 每页大小
+
+}
+
+// 用户实体
+message User {
+    string        id            = 1;  // 存UUID（用户唯一标识，主键）——>不存数据库自增id，避免暴露数据库信息
+    string        username      = 2;  // 登录名（唯一，用于登录认证）
+    string        email         = 3;  // 邮箱（可选，用于找回密码/通知）
+    string        mobile        = 4;  // 手机号（可选，同上，业务侧可做唯一约束）
+    string        display_name  = 5;  // 显示名称（昵称，非唯一，可修改）
+    string        password_hash = 6;  // 密码哈希（核心安全设计：不存储明文密码）
+    bool          disabled      = 7;  // 是否禁用（账号状态，用于逻辑删除/封号）
+    google.protobuf.Timestamp created_at    = 8;  // 创建时间（不可修改，服务端填充）
+    google.protobuf.Timestamp updated_at    = 9;  // 更新时间（服务端自动更新，记录最后修改时间）
+}
+
+// 1. CreateUser
+message CreateUserRequest {
+    string username     = 1;
+    string email        = 2;
+    string mobile       = 3;
+    string display_name = 4;
+    string password     = 5;  // 明文密码：仅请求时传递，服务端接收后转换为 password_hash 存储
+}
+message CreateUserResponse {
+    Result result   = 1;
+    User user       = 2;  // 返回创建后的完整用户实体，包含服务端自动填充的 id/created_at 等字段
+}
+
+// 2. GetUser / Read
+message GetUserRequest {
+    string id = 1;  // 按主键查询，简单高效，无歧义
+}
+message GetUserResponse {
+    Result result   = 1;
+    User user       = 2;  // 返回完整用户实体（注意：业务侧可隐藏 password_hash，避免泄露）
+
+}
+
+// 3. UpdateUser
+message UpdateUserRequest {
+    string id            = 1;  // 主键：指定要更新的用户
+    // 可选字段，服务端按需更新（核心：使用包装类型）
+    google.protobuf.Timestamp updated_at = 2;
+    google.protobuf.BoolValue disabled   = 3;
+    google.protobuf.StringValue display_name = 4;
+    // 如果需要修改密码，可另开接口或在此加入 password 字段
+}
+message UpdateUserResponse {
+    Result result   = 1;
+    User user       = 2;    // 返回更新后的完整用户实体，确认更新结果
+}
+
+// 4. DeleteUser
+message DeleteUserRequest {
+    string id         = 1;    // 按主键删除
+}
+message DeleteUserResponse {
+    Result result     = 1;
+    google.protobuf.Empty empty = 2;  // 无业务返回数据，使用标准 Empty 类型
+}
+
+// 5. ListUsers（分页）
+message ListUsersRequest {
+    PageRequest page = 1;  // 复用公共分页请求组件
+    string username_filter = 2;  // 简单过滤条件：按用户名模糊查询
+}
+message ListUsersResponse {
+    Result result           = 1;
+    repeated User users     = 2;  // repeated 关键字：表示用户列表（可重复字段）
+    PageResponse  page_info = 3;  // 复用公共分页响应组件，返回分页统计信息
+}
+
+// 6. 简单认证：基于用户名/密码签发 Token
+message AuthenticateRequest {
+    string username = 1;  // 登录名（与创建用户的 username 对应）
+    string password = 2;  // 明文密码（传输需加密，服务端与 password_hash 校验）
+}
+message AuthenticateResponse {
+    Result result     = 1;
+    string token      = 2;  // JWT 或其他格式的身份令牌
+    int64  expires_in = 3;  // 过期秒数（告知客户端 Token 有效期，便于客户端做刷新逻辑）
+}
+
+// 7. 验证 Token（可选）
+message ValidateTokenRequest {
+    string token = 1;  // 待验证的 Token
+}
+message ValidateTokenResponse {
+    Result result     = 1;
+    bool valid        = 2;  // Token 是否有效
+    string user_id    = 3;  // 有效时返回对应的用户 ID，便于后续业务处理
+    google.protobuf.Timestamp expires_at = 4;  // Token 过期时间，精准告知客户端有效期
+}
+
+// gRPC 服务定义
+service UserService {
+  // 用户 CRUD 接口
+  rpc CreateUser       (CreateUserRequest)   returns (CreateUserResponse);
+  rpc GetUser          (GetUserRequest)      returns (GetUserResponse);
+  rpc UpdateUser       (UpdateUserRequest)   returns (UpdateUserResponse);
+  rpc DeleteUser       (DeleteUserRequest)   returns (DeleteUserResponse);
+  rpc ListUsers        (ListUsersRequest)    returns (ListUsersResponse);
+
+  // 认证/授权接口
+  rpc Authenticate     (AuthenticateRequest) returns (AuthenticateResponse);
+  rpc ValidateToken    (ValidateTokenRequest) returns (ValidateTokenResponse);
+}

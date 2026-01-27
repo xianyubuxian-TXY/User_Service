@@ -1,0 +1,233 @@
+# ============================================================
+# Docker Compose 版本声明
+# ============================================================
+# 3.8 是较新的稳定版本，支持 healthcheck 的 condition 语法
+version: '3.8'
+
+services:
+  # ==========================================================
+  # MySQL 数据库服务
+  # ==========================================================
+  mysql:
+    image: mysql:8.0                          # 使用官方 MySQL 8.0 镜像
+    container_name: user-service-mysql        # 容器名称（方便识别）
+    environment:
+      MYSQL_ROOT_PASSWORD: root123            # root 用户密码
+      MYSQL_DATABASE: user_service            # 启动时自动创建的数据库
+    ports:
+      - "3307:3306"                           # 主机端口:容器端口，允许外部连接
+    volumes:
+      - mysql_data:/var/lib/mysql             # 数据持久化到命名卷
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+        # ↑ 初始化脚本，首次启动时自动执行（:ro = 只读挂载）
+    networks:
+      - user-network                          # 加入自定义网络
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+        # ↑ 健康检查命令：用 mysqladmin ping 测试连接
+      interval: 10s                           # 每 10 秒检查一次
+      timeout: 5s                             # 超时时间
+      retries: 5                              # 连续失败 5 次才判定不健康
+
+  # ==========================================================
+  # Redis 缓存服务
+  # ==========================================================
+  redis:
+    image: redis:7-alpine                     # alpine 版本更小（~30MB）
+    container_name: user-service-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data                      # 持久化 RDB/AOF 文件
+    command: redis-server --appendonly yes    # 启用 AOF 持久化
+      # ↑ 覆盖默认启动命令，保证数据不丢失
+    networks:
+      - user-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]      # PONG 表示健康
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================================
+  # ZooKeeper（Kafka 依赖的协调服务）
+  # ==========================================================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0    # Confluent 官方镜像（更稳定）
+    container_name: user-service-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181             # 客户端连接端口
+      ZOOKEEPER_TICK_TIME: 2000               # 心跳间隔（毫秒）
+    ports:
+      - "2181:2181"
+    volumes:
+      - zk_data:/var/lib/zookeeper/data       # 数据目录
+      - zk_log:/var/lib/zookeeper/log         # 事务日志目录
+    networks:
+      - user-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+        # ↑ 用 netcat 检查端口是否监听
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================================
+  # Kafka 消息队列
+  # ==========================================================
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: user-service-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy            # 等 ZK 健康后再启动
+    environment:
+      KAFKA_BROKER_ID: 1                      # Broker 唯一标识
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181 # ZK 连接地址（用容器名）
+      
+      # ↓ 监听器配置（关键！）
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+        # PLAINTEXT://kafka:29092      → 容器内部访问地址
+        # PLAINTEXT_HOST://localhost:9092 → 主机访问地址
+      
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+        # ↑ 监听器名称与协议的映射
+      
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+        # ↑ Broker 之间通信使用的监听器
+      
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+        # ↑ 单节点部署，副本因子设为 1
+      
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+        # ↑ 允许自动创建 Topic（生产环境建议关闭）
+    ports:
+      - "9092:9092"                           # 主机访问端口
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - user-network
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+        # ↑ 列出 topic 成功说明 Kafka 正常
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  # ==========================================================
+  # 用户服务实例 1
+  # ==========================================================
+  user-service-1:
+    build:
+      context: .                              # 构建上下文为当前目录
+      dockerfile: deploy/docker/Dockerfile    # Dockerfile 路径
+    container_name: user-service-1
+    depends_on:
+      # ↓ 依赖的服务必须健康才启动（避免连接失败）
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      zookeeper:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      - CONFIG_PATH=/app/configs/config.docker.yaml
+        # ↑ 告诉应用配置文件位置
+      - MYSQL_HOST=mysql                      # 用容器名作为主机名
+      - REDIS_HOST=redis
+      - KAFKA_BROKERS=kafka:29092             # 容器内部地址
+      - ZK_HOSTS=zookeeper:2181
+    ports:
+      - "50051:50051"                         # gRPC 端口映射
+    volumes:
+      - ./configs:/app/configs:ro             # 挂载配置目录（只读）
+      - ./logs:/app/logs                      # 挂载日志目录（可写）
+    networks:
+      - user-network
+
+  # ==========================================================
+  # 用户服务实例 2（水平扩展）
+  # ==========================================================
+  user-service-2:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile
+    container_name: user-service-2
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      zookeeper:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      - CONFIG_PATH=/app/configs/config.docker.yaml
+      - MYSQL_HOST=mysql
+      - REDIS_HOST=redis
+      - KAFKA_BROKERS=kafka:29092
+      - ZK_HOSTS=zookeeper:2181
+    ports:
+      - "50052:50051"                         # 注意：主机端口不同（50052）
+        # ↑ 容器内仍是 50051，但映射到主机 50052 避免冲突
+    volumes:
+      - ./configs:/app/configs:ro
+      - ./logs:/app/logs
+    networks:
+      - user-network
+
+  # ==========================================================
+  # Nginx 负载均衡器
+  # ==========================================================
+  nginx:
+    image: nginx:alpine
+    container_name: user-service-nginx
+    depends_on:
+      - user-service-1
+      - user-service-2
+    ports:
+      - "8080:80"                             # HTTP 端口（健康检查/metrics）
+      - "50050:50050"                         # gRPC 负载均衡入口
+        # ↑ 客户端连接 50050，Nginx 转发到 50051/50052
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+        # ↑ 自定义 Nginx 配置
+    networks:
+      - user-network
+
+  # ==========================================================
+  # Kafka UI（调试工具，生产环境可删除）
+  # ==========================================================
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8081:8080"                           # 访问 http://localhost:8081
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local            # 集群显示名称
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - user-network
+
+# ==============================================================
+# 命名卷（Docker 管理的持久化存储）
+# ==============================================================
+volumes:
+  mysql_data:     # MySQL 数据
+  redis_data:     # Redis 数据
+  zk_data:        # ZooKeeper 数据
+  zk_log:         # ZooKeeper 日志
+  kafka_data:     # Kafka 数据
+
+# ==============================================================
+# 自定义网络
+# ==============================================================
+networks:
+  user-network:
+    driver: bridge    # 桥接网络，容器间可通过容器名互访

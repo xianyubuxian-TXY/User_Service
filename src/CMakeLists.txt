@@ -1,0 +1,6 @@
+add_subdirectory(config)
+add_subdirectory(common)
+add_subdirectory(db)
+add_subdirectory(cache)
+add_subdirectory(kafka)
+add_subdirectory(service)
