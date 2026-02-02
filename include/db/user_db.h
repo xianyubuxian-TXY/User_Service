@@ -2,101 +2,75 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 #include "pool/connection_pool.h"
 #include "mysql_connection.h"
 #include "config/config.h"
-#include "../../build/api/proto/user_service.grpc.pb.h"
+#include "common/result.h"
+#include "entity/user_entity.h"
+#include "entity/page.h"
 
+namespace user_service {
 
-namespace user_service{
-
-struct UserEntity {
-    int64_t id = 0;
-    std::string uuid;
-    std::string username;
-    std::string email;
-    std::string mobile;
-    std::string display_name;
-    std::string password_hash;
-    bool disabled = false;
-    std::string created_at;
-    std::string updated_at;
+struct UserQueryParams {
+    PageParams page_params;
+    std::optional<std::string> mobile_like;
+    std::optional<bool> disabled;
 };
 
-// 分页查询参数
-struct PageParams {
-    int page = 1;           // 当前页
-    int page_size = 20;     // 每页记录数
-
-    // 计算 offset
-    int Offset() const{
-        return (page-1)*page_size;
-    }
-
-    // 参数校验 
-    void Validate(){
-        if(page<1) page=1;
-        if(page_size<1) page_size=20;
-        if(page_size>100) page_size=100; // 防止一次查太多,导致性能太差
-    }
-};
-
-// 分页查询结果
-struct PageResult {
-    int total_records;  // 总记录数        
-    int total_pages;    // 总页数
-    int page;           // 当前页
-    int page_size;      // 每页记录数量
-
-    static PageResult Create(int page,int page_size,int total_records){
-        PageResult res;
-        res.page=page;
-        res.page_size=page_size;
-        res.total_records=total_records;
-        res.total_pages=(total_records+page_size-1)/page_size; //下取整
-        return res;
-    }
-};
 
 class MySQLResult;
 
 // DAO封装
-class UserDB{
-    using MySQLPool=TemplateConnectionPool<MySQLConnection>;
+class UserDB {
+public:
+    using MySQLPool = TemplateConnectionPool<MySQLConnection>;
+    using UserListResult = Result<std::pair<std::vector<UserEntity>, PageResult>>;
 
     explicit UserDB(std::shared_ptr<MySQLPool> pool);
 
-    // CRUD 操作：Create、Read、Update、Delete
-    UserEntity Create(const UserEntity& user);
-    UserEntity FindById(int64_t id);
-    UserEntity FindByUUID(const std::string& uuid);
-    UserEntity FindByUsername(const std::string& username);
-    bool Update(const UserEntity& user);
-    bool Delete(int64_t id);
-    bool DeleteByUUID(const std::string& uuid);
+    // ==================== CRUD 操作 ====================
     
-    // 分页查询（模糊查询）
-    std::pair<std::vector<UserEntity>, PageResult> 
-    FindAll(const PageParams& page, const std::string& username_filter = "");
+    // 创建用户
+    Result<UserEntity> Create(const UserEntity& user);
     
-    // 辅助查询
-    bool ExistsByUsername(const std::string& username);
-    bool ExistsByMobile(const std::string& mobile);
-    bool ExistsByEmail(const std::string& email);
+    // 查询用户
+    Result<UserEntity> FindById(int64_t id);
+    Result<UserEntity> FindByUUID(const std::string& uuid);
+    Result<UserEntity> FindByMobile(const std::string& mobile);  // 手机号查询（登录用）
     
+    // 更新用户
+    Result<void> Update(const UserEntity& user);
+    
+    // 删除用户
+    Result<void> Delete(int64_t id);
+    Result<void> DeleteByUUID(const std::string& uuid);
+    
+    // ==================== 分页查询 ====================
+    
+    // 查询用户列表（分页查询：手机号模糊查询）
+    UserListResult FindAll(const PageParams& page, const std::string& mobile_filter = "");
+    
+    // 查询用户列表（分页查询：多参数查询）
+    Result<std::vector<UserEntity>> FindAll(const UserQueryParams& params);
+    // ==================== 辅助查询 ====================
+    // 判断是否存在
+    Result<bool> ExistsByMobile(const std::string& mobile);
 
+    // 统计用户数量
+    Result<int64_t> Count(const UserQueryParams& params);
 
 private:
-    bool ExistsByField(const std::string& field_name,const std::string& field_val);
+    // 根据字段寻找
+    Result<UserEntity> FindByField(const std::string& field_name, const std::string& field_val);
 
+    // 判断字段值是否存在
+    Result<bool> ExistsByField(const std::string& field_name, const std::string& field_val);
+
+    // 解析查询的一行
     UserEntity ParseRow(MySQLResult& res);
 
     std::shared_ptr<MySQLPool> pool_;
-
-
 };
-
-
-
 
 }

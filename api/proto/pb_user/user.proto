@@ -1,0 +1,115 @@
+syntax = "proto3";
+
+package user;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+import "pb_common/result.proto";
+
+// ==================== 通用消息 ====================
+
+message User {
+    string id = 1;
+    string mobile = 2;
+    string display_name = 3;
+    bool disabled = 4;
+    google.protobuf.Timestamp created_at = 5;
+    google.protobuf.Timestamp updated_at = 6;
+}
+
+// 分页请求
+message PageRequest {
+    int32 page = 1;
+    int32 page_size = 2;
+}
+
+// 分页响应
+message PageResponse {
+    int64 total_records = 1;
+    int32 total_pages = 2;
+    int32 page = 3;
+    int32 page_size = 4;
+}
+
+// ==================== 获取用户信息 ====================
+
+message GetCurrentUserRequest {
+    // 无参数，从 Token 中获取 user_id
+}
+
+message GetCurrentUserResponse {
+    common.Result result = 1;
+    User user = 2;
+}
+
+message GetUserRequest {
+    string id = 1;
+}
+
+message GetUserResponse {
+    common.Result result = 1;
+    User user = 2;
+}
+
+// ==================== 更新用户 ====================
+
+message UpdateUserRequest {
+    google.protobuf.StringValue display_name = 1;
+    // 后续扩展：avatar_url, email 等
+}
+
+message UpdateUserResponse {
+    common.Result result = 1;
+    User user = 2;
+}
+
+// ==================== 修改密码（已登录状态） ====================
+
+message ChangePasswordRequest {
+    string old_password = 1;
+    string new_password = 2;
+}
+
+message ChangePasswordResponse {
+    common.Result result = 1;
+}
+
+// ==================== 删除用户（注销） ====================
+
+message DeleteUserRequest {
+    string verify_code = 1;     // 需要验证码确认
+}
+
+message DeleteUserResponse {
+    common.Result result = 1;
+}
+
+// ==================== 用户列表（管理员） ====================
+
+message ListUsersRequest {
+    PageRequest page = 1;
+    string mobile_filter = 2;
+    google.protobuf.BoolValue disabled_filter = 3;
+}
+
+message ListUsersResponse {
+    common.Result result = 1;
+    repeated User users = 2;
+    PageResponse page_info = 3;
+}
+
+// ==================== 服务定义 ====================
+
+service UserService {
+    // 当前用户
+    rpc GetCurrentUser(GetCurrentUserRequest) returns (GetCurrentUserResponse);
+    rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse);
+    // 用户已登录，知道旧密码，想改成新密码
+    rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse);
+    rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
+    
+    // 管理员接口
+    rpc GetUser(GetUserRequest) returns (GetUserResponse);
+    rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+}
+    

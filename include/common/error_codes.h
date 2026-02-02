@@ -5,7 +5,7 @@
 #include <grpcpp/grpcpp.h>
 
 namespace user_service{
-enum class ErrorCode : int {
+enum class ErrorCode{
     // ========== 成功 ==========
     Ok = 0,
 
@@ -18,11 +18,7 @@ enum class ErrorCode : int {
     Timeout             = 104,  // 请求超时
 
     // 参数错误（2xx）
-    InvalidArgument     = 200,  // 参数无效（通用）
-    MissingRequired     = 201,  // 缺少必要参数
-    InvalidFormat       = 202,  // 格式错误
-    ValueTooLong        = 203,  // 值过长
-    ValueTooShort       = 204,  // 值过短
+    InvalidArgument     = 200,  // 参数无效
     InvalidPage         = 210,  // 无效的分页参数
     InvalidPageSize     = 211,  // 无效的分页大小
 
@@ -42,8 +38,11 @@ enum class ErrorCode : int {
     LoginFailed         = 1010, // 登录失败（通用）
     WrongPassword       = 1011, // 密码错误
     AccountLocked       = 1012, // 账号已锁定（多次密码错误）
-    NeedCaptcha         = 1020, // 需要验证码
+
+    // 验证码相关
     CaptchaWrong        = 1021, // 验证码错误
+    CaptchaExpired      = 1022, // 验证码已过期
+
 
     // ==================== 用户错误（2000~2999） ====================
     // 用户查询（200x）
@@ -52,20 +51,11 @@ enum class ErrorCode : int {
 
     // 用户创建（201x）
     UserAlreadyExists   = 2010, // 用户已存在（通用）
-    UsernameTaken       = 2011, // 用户名已被占用
-    EmailTaken          = 2012, // 邮箱已被占用
     MobileTaken         = 2013, // 手机号已被占用
 
     // 用户状态（202x）
     UserDisabled        = 2020, // 用户已禁用
     UserNotVerified     = 2021, // 用户未验证
-
-    // 用户字段验证（203x）
-    InvalidUsername     = 2030, // 用户名格式无效
-    InvalidEmail        = 2031, // 邮箱格式无效
-    InvalidMobile       = 2032, // 手机号格式无效
-    InvalidPassword     = 2033, // 密码不符合要求
-    PasswordTooWeak     = 2034, // 密码强度不足
 
     // ==================== 权限错误（3000~3999） ====================
     PermissionDenied    = 3000, // 无权限（通用）
@@ -89,10 +79,6 @@ inline std::string GetErrorMessage(ErrorCode code) {
         case ErrorCode::ServiceUnavailable:  return "服务暂不可用";
         case ErrorCode::Timeout:             return "请求超时";
         case ErrorCode::InvalidArgument:     return "参数无效";
-        case ErrorCode::MissingRequired:     return "缺少必要参数";
-        case ErrorCode::InvalidFormat:       return "格式错误";
-        case ErrorCode::ValueTooLong:        return "内容过长";
-        case ErrorCode::ValueTooShort:       return "内容过短";
         case ErrorCode::InvalidPage:         return "无效的页码";
         case ErrorCode::InvalidPageSize:     return "无效的每页大小";
         case ErrorCode::RateLimited:         return "请求过于频繁，请稍后再试";
@@ -107,23 +93,16 @@ inline std::string GetErrorMessage(ErrorCode code) {
         case ErrorCode::LoginFailed:         return "登录失败";
         case ErrorCode::WrongPassword:       return "用户名或密码错误";  // 故意模糊
         case ErrorCode::AccountLocked:       return "账号已锁定，请稍后再试";
-        case ErrorCode::NeedCaptcha:         return "请完成验证码验证";
         case ErrorCode::CaptchaWrong:        return "验证码错误";
+        case ErrorCode::CaptchaExpired:      return "验证码已过期，请重新获取";
 
         // 用户错误
         case ErrorCode::UserNotFound:        return "用户不存在";
         case ErrorCode::UserDeleted:         return "用户已注销";
         case ErrorCode::UserAlreadyExists:   return "用户已存在";
-        case ErrorCode::UsernameTaken:       return "用户名已被占用";
-        case ErrorCode::EmailTaken:          return "邮箱已被使用";
         case ErrorCode::MobileTaken:         return "手机号已被使用";
         case ErrorCode::UserDisabled:        return "账号已被禁用";
         case ErrorCode::UserNotVerified:     return "账号未验证";
-        case ErrorCode::InvalidUsername:     return "用户名格式不正确";
-        case ErrorCode::InvalidEmail:        return "邮箱格式不正确";
-        case ErrorCode::InvalidMobile:       return "手机号格式不正确";
-        case ErrorCode::InvalidPassword:     return "密码不符合要求";
-        case ErrorCode::PasswordTooWeak:     return "密码强度不足";
 
         // 权限错误
         case ErrorCode::PermissionDenied:    return "无权限执行此操作";
@@ -142,17 +121,8 @@ inline constexpr grpc::StatusCode ToGrpcStatus(ErrorCode code) {
 
         // 参数错误 → INVALID_ARGUMENT
         case ErrorCode::InvalidArgument:
-        case ErrorCode::MissingRequired:
-        case ErrorCode::InvalidFormat:
-        case ErrorCode::ValueTooLong:
-        case ErrorCode::ValueTooShort:
         case ErrorCode::InvalidPage:
         case ErrorCode::InvalidPageSize:
-        case ErrorCode::InvalidUsername:
-        case ErrorCode::InvalidEmail:
-        case ErrorCode::InvalidMobile:
-        case ErrorCode::InvalidPassword:
-        case ErrorCode::PasswordTooWeak:
             return grpc::StatusCode::INVALID_ARGUMENT;
 
         // 认证错误 → UNAUTHENTICATED
@@ -163,6 +133,8 @@ inline constexpr grpc::StatusCode ToGrpcStatus(ErrorCode code) {
         case ErrorCode::TokenRevoked:
         case ErrorCode::LoginFailed:
         case ErrorCode::WrongPassword:
+        case ErrorCode::CaptchaWrong:
+        case ErrorCode::CaptchaExpired:
             return grpc::StatusCode::UNAUTHENTICATED;
 
         // 未找到 → NOT_FOUND
@@ -172,8 +144,6 @@ inline constexpr grpc::StatusCode ToGrpcStatus(ErrorCode code) {
 
         // 已存在 → ALREADY_EXISTS
         case ErrorCode::UserAlreadyExists:
-        case ErrorCode::UsernameTaken:
-        case ErrorCode::EmailTaken:
         case ErrorCode::MobileTaken:
             return grpc::StatusCode::ALREADY_EXISTS;
 
@@ -211,17 +181,8 @@ inline constexpr int ToHttpStatus(ErrorCode code) {
         case ErrorCode::Ok:                  return 200;
         
         case ErrorCode::InvalidArgument:
-        case ErrorCode::MissingRequired:
-        case ErrorCode::InvalidFormat:
-        case ErrorCode::ValueTooLong:
-        case ErrorCode::ValueTooShort:
         case ErrorCode::InvalidPage:
-        case ErrorCode::InvalidPageSize:
-        case ErrorCode::InvalidUsername:
-        case ErrorCode::InvalidEmail:
-        case ErrorCode::InvalidMobile:
-        case ErrorCode::InvalidPassword:
-        case ErrorCode::PasswordTooWeak:     return 400;  // Bad Request
+        case ErrorCode::InvalidPageSize:     return 400;  // Bad Request
 
         case ErrorCode::Unauthenticated:
         case ErrorCode::TokenMissing:
@@ -229,7 +190,9 @@ inline constexpr int ToHttpStatus(ErrorCode code) {
         case ErrorCode::TokenExpired:
         case ErrorCode::TokenRevoked:
         case ErrorCode::LoginFailed:
-        case ErrorCode::WrongPassword:       return 401;  // Unauthorized
+        case ErrorCode::WrongPassword:
+        case ErrorCode::CaptchaWrong:
+        case ErrorCode::CaptchaExpired:      return 401;  // Unauthorized
 
         case ErrorCode::PermissionDenied:
         case ErrorCode::AdminRequired:
@@ -241,8 +204,6 @@ inline constexpr int ToHttpStatus(ErrorCode code) {
         case ErrorCode::UserDeleted:         return 404;  // Not Found
 
         case ErrorCode::UserAlreadyExists:
-        case ErrorCode::UsernameTaken:
-        case ErrorCode::EmailTaken:
         case ErrorCode::MobileTaken:         return 409;  // Conflict
 
         case ErrorCode::RateLimited:
@@ -256,4 +217,3 @@ inline constexpr int ToHttpStatus(ErrorCode code) {
 }
 
 }
-

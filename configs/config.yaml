@@ -77,10 +77,42 @@ zookeeper:
   session_timeout_ms: 30000
   service_path: "/services/user-service"
 
+# ============ 业务配置 ============
+
 security:
   jwt_secret: "your-super-secret-key-change-in-production"
-  token_ttl: 900  # 15分钟
-  refresh_token_ttl: 604800 # 7天
+  jwt_issuer: "user-service"
+  access_token_ttl_seconds: 900       # 15分钟
+  refresh_token_ttl_seconds: 604800   # 7天
+
+sms:
+  code_len: 6
+  code_ttl_seconds: 300               # 5分钟
+  send_interval_seconds: 60           # 60秒
+  max_retry_count: 5
+  retry_ttl_seconds: 300              # 5分钟
+  lock_seconds: 1800                  # 30分钟
+
+login:
+  max_failed_attempts: 5              # 最多失败5次
+  failed_attempts_window: 900         # 15分钟内
+  lock_duration_seconds: 1800         # 锁定30分钟
+  max_sessions_per_user: 5            # 最多5个设备
+  kick_oldest_session: true
+  enable_password_login: true
+  enable_sms_login: true
+  require_captcha: false
+  captcha_after_failed_attempts: 3
+
+password:
+  min_length: 8
+  max_length: 32
+  require_uppercase: false
+  require_lowercase: false
+  require_digit: true
+  require_special_char: false
+  expire_days: 0                      # 0 = 不过期
+  history_count: 0                    # 0 = 不检查历史密码
 
 log:
   level: "trace"

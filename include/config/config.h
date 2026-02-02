@@ -118,14 +118,6 @@ struct ZooKeeperConfig {
     std::string ToString() const;
 };
 
-struct SecurityConfig {
-    std::string jwt_secret = "your-secret-key";
-    std::chrono::seconds token_ttl{900};           // 15分钟
-    std::chrono::seconds refresh_token_ttl{604800}; // 7天
-
-    std::string ToString() const;
-};
-
 struct LogConfig {
     std::string level = "info";
     std::string path = "./logs";
@@ -137,14 +129,95 @@ struct LogConfig {
     std::string ToString() const;
 };
 
+
+// ==================================== 业务相关 ===============================
+
+// token配置
+struct SecurityConfig {
+    std::string jwt_secret = "your-secret-key";
+    std::string jwt_issuer = "user-service";        
+    int access_token_ttl_seconds{900};              // access_token有效期：15分钟
+    int refresh_token_ttl_seconds{604800};          // refresh_token有效期：7天
+
+    std::string ToString() const;
+};
+
+// 验证码配置
+struct SmsConfig{
+    // 验证码长度
+    int code_len=6;
+
+    // 验证码有效期（秒）
+    int code_ttl_seconds=300;       // 5分钟有效期
+
+    // 发送间隔（秒）- 防止频繁发送（可以覆盖之前的验证码，方便用户没有收到验证码时快速重新获取）
+    int send_interval_seconds=60;    // 60秒才能重发
+    
+    // 最大验证错误次数
+    int max_retry_count=5;          
+
+    // 错误次数记录有效期（秒）
+    int retry_ttl_seconds=300;      // 3分钟 
+
+    // 失败次数超过max_retry_count，进行锁定（避免被暴力破解）
+    int lock_seconds = 1800;            // 锁定30分钟
+
+    std::string ToString() const;
+};
+
+// ============ 登录安全配置 ============
+struct LoginConfig {
+    // ==================== 登录失败锁定策略 ====================
+    int max_failed_attempts = 5;        // 最大登录失败次数
+    int failed_attempts_window = 900;   // 失败计数窗口期（秒），15分钟
+    int lock_duration_seconds = 1800;   // 锁定时长（秒），30分钟
+    
+    // ==================== 会话管理 ====================
+    int max_sessions_per_user = 5;      // 单用户最大同时登录设备数
+    bool kick_oldest_session = true;    // 超出时是否踢掉最旧的会话（false则拒绝新登录）
+    
+    // ==================== 登录方式开关 ====================
+    bool enable_password_login = true;  // 允许密码登录
+    bool enable_sms_login = true;       // 允许验证码登录
+    
+    // ==================== 图形验证码 ====================
+    bool require_captcha = false;                   // 是否强制图形验证码
+    int captcha_after_failed_attempts = 3;          // 失败N次后需要图形验证码
+
+    std::string ToString() const;
+};
+
+// ============ 密码策略配置 ============
+struct PasswordPolicyConfig {
+    int min_length = 8;                 // 最小长度
+    int max_length = 32;                // 最大长度
+    bool require_uppercase = false;     // 需要大写字母
+    bool require_lowercase = false;     // 需要小写字母
+    bool require_digit = true;          // 需要数字
+    bool require_special_char = false;  // 需要特殊字符
+    
+    // 密码过期（0 = 不过期）
+    int expire_days = 0;                
+    
+    // 历史密码检查（0 = 不检查）
+    int history_count = 0;              // 不能与最近N个密码相同
+
+    std::string ToString() const;
+};
+
 struct Config {
     ServerConfig server;
     MySQLConfig mysql;
     RedisConfig redis;
     KafkaConfig kafka;
     ZooKeeperConfig zookeeper;
-    SecurityConfig security;
     LogConfig log;
+    
+    // 业务配置
+    SecurityConfig security;
+    SmsConfig sms;
+    LoginConfig login;                  // 登录安全策略
+    PasswordPolicyConfig password;      // 密码强度策略
     
     // 从 YAML 文件加载配置
     static Config LoadFromFile(const std::string& path);
@@ -155,4 +228,4 @@ struct Config {
     std::string ToString() const;
 };
 
-} // namespace user
+} // namespace user_service

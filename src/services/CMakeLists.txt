@@ -1,15 +1,19 @@
-add_library(user_service user_service_impl.cpp)
+add_library(user_service auth_service.cpp user_service.cpp)
 
 
 target_include_directories(user_service 
     PUBLIC
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/include/service
-    ${CMAKE_BINARY_DIR}/api/proto
+    ${CMAKE_CURRENT_SOURCE_DIR}
 
 )
 
 target_link_libraries(user_service 
     PUBLIC
-    proto_lib
+    user_auth
+    user_cache
+    user_common
+    user_config
+    user_db
 )

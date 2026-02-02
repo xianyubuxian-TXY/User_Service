@@ -11,8 +11,6 @@ USE user_service;
 CREATE TABLE IF NOT EXISTS `users` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '自增主键',
     `uuid` CHAR(36) NOT NULL COMMENT '对外暴露的用户ID',
-    `username` VARCHAR(64) NOT NULL COMMENT '登录名',
-    `email` VARCHAR(128) DEFAULT NULL COMMENT '邮箱',
     `mobile` VARCHAR(20) DEFAULT NULL COMMENT '手机号',
     `display_name` VARCHAR(128) DEFAULT NULL COMMENT '显示名称',
     `password_hash` VARCHAR(256) NOT NULL COMMENT '密码哈希',
@@ -21,8 +19,6 @@ CREATE TABLE IF NOT EXISTS `users` (
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_uuid` (`uuid`),
-    UNIQUE KEY `uk_username` (`username`),
-    UNIQUE KEY `uk_email` (`email`),
     UNIQUE KEY `uk_mobile` (`mobile`),
     KEY `idx_disabled` (`disabled`),
     KEY `idx_created_at` (`created_at`)

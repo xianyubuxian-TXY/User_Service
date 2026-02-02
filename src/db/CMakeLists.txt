@@ -1,4 +1,4 @@
-add_library(user_db mysql_connection.cpp mysql_result.cpp)
+add_library(user_db user_db.cpp mysql_connection.cpp mysql_result.cpp)
 
 target_include_directories(user_db PUBLIC
             ${PROJECT_SOURCE_DIR}/include/db
@@ -10,4 +10,5 @@ target_link_libraries(user_db
     PUBLIC
         ${MYSQL_LIBRARIES}
         user_config
+        uuid
 )

@@ -7,11 +7,20 @@
 
 namespace user_service {
 
+// ==================== 构造与析构 ====================
+
 MySQLConnection::MySQLConnection(const MySQLConfig& config) {
+    /*
+     * 连接流程：
+     * 1. 初始化句柄并设置选项
+     * 2. 尝试首次连接
+     * 3. 失败且可重试 → 进入重试逻辑
+     * 4. 失败且不可重试 → 直接抛异常
+     */
     try {
-        // 初始化并设置选项
         InitAndSetOptions(config);
     } catch (...) {
+        // 确保异常时资源被释放（RAII 补充）
         if (mysql_) {
             mysql_close(mysql_);
             mysql_ = nullptr;
@@ -25,25 +34,27 @@ MySQLConnection::MySQLConnection(const MySQLConfig& config) {
                             config.password.c_str(),
                             config.database.c_str(),
                             config.port,
-                            nullptr,
-                            0)) {
-        // 一定要先保存错误信息，否则释放mysql_后就无法获取了
+                            nullptr,    // unix_socket: 使用 TCP 连接时传 nullptr
+                            0)) {       // client_flag: 默认选项
+        // 重要：必须在 mysql_close 之前保存错误信息！
+        // mysql_close 后 mysql_ 指向的内存被释放，再调用 mysql_error 是未定义行为
         unsigned int err_code = mysql_errno(mysql_);
         std::string err_msg = mysql_error(mysql_);
 
-        // 连接失败
         mysql_close(mysql_);
         mysql_ = nullptr;
 
+        // 判断是否需要重试
+        MySQLException ex(err_code, err_msg);
         bool should_retry = config.auto_reconnect.value_or(false) &&
                             config.max_retries > 0 &&
-                            IsRetryableError(err_code);
+                            ex.IsRetryable();
 
         if (!should_retry) {
-            ThrowByErrorCode(err_code, err_msg);
+            throw ex;
         }
 
-        // 重连
+        // 进入重试逻辑
         ConnectWithRetry(config);
     }
 }
@@ -55,99 +66,141 @@ MySQLConnection::~MySQLConnection() {
     }
 }
 
-MySQLResult MySQLConnection::Query(const std::string& sql, std::initializer_list<Param> params) {
-    std::string new_sql = BuildSQL(sql, params);
+// ==================== 查询与执行 ====================
 
-    // 执行查询
+MySQLResult MySQLConnection::Query(const std::string& sql, std::initializer_list<Param> params) {
+    std::string new_sql = BuildSQL(sql, params.begin(),params.end());
+
     if (mysql_query(mysql_, new_sql.c_str()) != 0) {
         unsigned int err_code = mysql_errno(mysql_);
         std::string err_msg = mysql_error(mysql_);
-        ThrowByErrorCode(err_code, err_msg);
+        ThrowMySQLException(err_code, err_msg);
     }
 
-    // 获取结果集
+    // mysql_store_result: 将整个结果集拉取到客户端内存
+    // 优点：可随机访问、可获取总行数
+    // 缺点：大结果集占用内存多（大结果集应使用 mysql_use_result 流式获取）
     MYSQL_RES* res = mysql_store_result(mysql_);
 
-    // 注意：SELECT 语句执行出错时， res为nullptr（空集时不会为nullptr）
-    // 但如果是非 SELECT 语句调用了 Query，res 也会是 nullptr
+    /*
+     * res == nullptr 的三种情况：
+     * 1. SELECT 返回空集 → field_count > 0，这是正常的空结果
+     * 2. 非 SELECT 语句（如 UPDATE）→ field_count == 0，正常
+     * 3. 发生错误 → field_count > 0 但 res 为空，需要抛异常
+     * 
+     * 因此判断条件是：res == nullptr && field_count > 0
+     */
     if (res == nullptr && mysql_field_count(mysql_) > 0) {
-        // 应该有结果但没拿到，说明出错了
         unsigned int err_code = mysql_errno(mysql_);
         std::string err_msg = mysql_error(mysql_);
-        ThrowByErrorCode(err_code, err_msg);
+        ThrowMySQLException(err_code, err_msg);
     }
 
     return MySQLResult(res);
 }
 
-// Insert、Update、Delete
-uint64_t MySQLConnection::Execute(const std::string& sql, std::initializer_list<Param> params) {
-    std::string new_sql = BuildSQL(sql, params);
+MySQLResult MySQLConnection::Query(const std::string& sql, const std::vector<Param>& params) {
+    std::string new_sql = BuildSQL(sql, params.begin(),params.end());
 
     if (mysql_query(mysql_, new_sql.c_str()) != 0) {
         unsigned int err_code = mysql_errno(mysql_);
         std::string err_msg = mysql_error(mysql_);
-        ThrowByErrorCode(err_code, err_msg);
+        ThrowMySQLException(err_code, err_msg);
     }
 
+    // mysql_store_result: 将整个结果集拉取到客户端内存
+    // 优点：可随机访问、可获取总行数
+    // 缺点：大结果集占用内存多（大结果集应使用 mysql_use_result 流式获取）
+    MYSQL_RES* res = mysql_store_result(mysql_);
+
+    /*
+     * res == nullptr 的三种情况：
+     * 1. SELECT 返回空集 → field_count > 0，这是正常的空结果
+     * 2. 非 SELECT 语句（如 UPDATE）→ field_count == 0，正常
+     * 3. 发生错误 → field_count > 0 但 res 为空，需要抛异常
+     * 
+     * 因此判断条件是：res == nullptr && field_count > 0
+     */
+    if (res == nullptr && mysql_field_count(mysql_) > 0) {
+        unsigned int err_code = mysql_errno(mysql_);
+        std::string err_msg = mysql_error(mysql_);
+        ThrowMySQLException(err_code, err_msg);
+    }
+
+    return MySQLResult(res);
+}
+
+uint64_t MySQLConnection::Execute(const std::string& sql, std::initializer_list<Param> params) {
+    std::string new_sql = BuildSQL(sql, params.begin(),params.end());
+
+    if (mysql_query(mysql_, new_sql.c_str()) != 0) {
+        unsigned int err_code = mysql_errno(mysql_);
+        std::string err_msg = mysql_error(mysql_);
+        // INSERT 可能触发唯一键冲突（错误码 1062）
+        // ThrowMySQLException 会根据错误码自动选择异常类型
+        ThrowMySQLException(err_code, err_msg);
+    }
+
+    // 返回受影响的行数
+    // 注意：UPDATE 即使值没变化也可能返回 0（取决于 CLIENT_FOUND_ROWS 标志）
     return mysql_affected_rows(mysql_);
 }
 
-// 获取Insert后的id
+uint64_t MySQLConnection::Execute(const std::string& sql, const std::vector<Param>& params) {
+    std::string new_sql = BuildSQL(sql, params.begin(),params.end());
+
+    if (mysql_query(mysql_, new_sql.c_str()) != 0) {
+        unsigned int err_code = mysql_errno(mysql_);
+        std::string err_msg = mysql_error(mysql_);
+        // INSERT 可能触发唯一键冲突（错误码 1062）
+        // ThrowMySQLException 会根据错误码自动选择异常类型
+        ThrowMySQLException(err_code, err_msg);
+    }
+
+    // 返回受影响的行数
+    // 注意：UPDATE 即使值没变化也可能返回 0（取决于 CLIENT_FOUND_ROWS 标志）
+    return mysql_affected_rows(mysql_);
+}
+
 uint64_t MySQLConnection::LastInsertId() {
+    // 返回最近一次 INSERT 生成的 AUTO_INCREMENT 值
+    // 注意：必须在同一连接上、INSERT 之后立即调用
     return mysql_insert_id(mysql_);
 }
 
+// ==================== 初始化与连接 ====================
+
 void MySQLConnection::InitAndSetOptions(const MySQLConfig& config) {
-    // 初始化连接句柄
     mysql_ = mysql_init(nullptr);
     if (!mysql_) {
-        // 注意：不可以throw MySQLException(mysql_errno(mysql_),mysql_error(mysql_));
-        // 因为mysql_ 是 nullptr，mysql_errno(nullptr) 行为未定义
-        throw MySQLConnectionException("mysql_init failed: out of memory");
+        // mysql_init 失败通常是内存不足
+        // 此时 mysql_ 为空，不能调用 mysql_errno/mysql_error
+        throw MySQLException(0, "mysql_init failed: out of memory");
     }
 
-    // 设置参数
+    // 设置超时参数（单位转换：ms → s，MySQL C API 只支持秒级精度）
     if (config.connection_timeout_ms.has_value()) {
-        unsigned int connection_timeout = config.connection_timeout_ms.value() / 1000; // ms—>s
-        mysql_options(mysql_, MYSQL_OPT_CONNECT_TIMEOUT, &connection_timeout);
+        unsigned int timeout_sec = config.connection_timeout_ms.value() / 1000;
+        mysql_options(mysql_, MYSQL_OPT_CONNECT_TIMEOUT, &timeout_sec);
     }
     if (config.read_timeout_ms.has_value()) {
-        unsigned int read_timeout = config.read_timeout_ms.value() / 1000;
-        mysql_options(mysql_, MYSQL_OPT_READ_TIMEOUT, &read_timeout);
+        unsigned int timeout_sec = config.read_timeout_ms.value() / 1000;
+        mysql_options(mysql_, MYSQL_OPT_READ_TIMEOUT, &timeout_sec);
     }
     if (config.write_timeout_ms.has_value()) {
-        unsigned int write_timeout = config.write_timeout_ms.value() / 1000;
-        mysql_options(mysql_, MYSQL_OPT_WRITE_TIMEOUT, &write_timeout);
+        unsigned int timeout_sec = config.write_timeout_ms.value() / 1000;
+        mysql_options(mysql_, MYSQL_OPT_WRITE_TIMEOUT, &timeout_sec);
     }
+    
+    // 自动重连设置
+    // 注意：MySQL C API 用 unsigned int 表示 bool（0=false, 非0=true）
     if (config.auto_reconnect.has_value()) {
-        /* MySQL C API 底层不直接支持 bool 类型，而是用 unsigned int（无符号整数）来表示布尔值，
-           0 代表 false，非 0 代表 true。*/
         unsigned int mybool = config.auto_reconnect.value() ? 1 : 0;
         mysql_options(mysql_, MYSQL_OPT_RECONNECT, &mybool);
     }
 
+    // 字符集设置（必须在连接前设置）
     mysql_options(mysql_, MYSQL_SET_CHARSET_NAME, config.charset.c_str());
-}
-
-// 判断错误是否值得重试
-bool MySQLConnection::IsRetryableError(unsigned int err_code) {
-    switch (err_code) {
-        // 可重试的错误（网络/临时性问题）
-        case 2002:  // CR_CONNECTION_ERROR - socket 错误
-        case 2003:  // CR_CONN_HOST_ERROR - 无法连接主机
-        case 2006:  // CR_SERVER_GONE_ERROR - 服务器断开
-        case 2013:  // CR_SERVER_LOST - 连接丢失
-            return true;
-
-        // 不可重试的错误（配置/认证问题）
-        case 1045:  // ER_ACCESS_DENIED_ERROR - 认证失败
-        case 1044:  // ER_DBACCESS_DENIED_ERROR - 无权限
-        case 1049:  // ER_BAD_DB_ERROR - 数据库不存在
-        case 2005:  // CR_UNKNOWN_HOST - 未知主机
-        default:
-            return false;
-    }
 }
 
 void MySQLConnection::ConnectWithRetry(const MySQLConfig& config) {
@@ -156,9 +209,9 @@ void MySQLConnection::ConnectWithRetry(const MySQLConfig& config) {
 
     for (unsigned int attempt = 1; attempt <= config.max_retries; ++attempt) {
         try {
+            // 每次重试都需要重新初始化（上一次的句柄已被关闭）
             InitAndSetOptions(config);
 
-            // 尝试连接
             if (mysql_real_connect(mysql_,
                                    config.host.c_str(),
                                    config.username.c_str(),
@@ -167,84 +220,130 @@ void MySQLConnection::ConnectWithRetry(const MySQLConfig& config) {
                                    config.port,
                                    nullptr,
                                    0)) {
-                // 连接成功
-                return;
+                return;  // 连接成功，直接返回
             }
 
-            // 连接失败
+            // 保存错误信息（同样要在 close 之前）
             err_code = mysql_errno(mysql_);
             err_msg = mysql_error(mysql_);
 
-            // 释放当前句柄
             mysql_close(mysql_);
             mysql_ = nullptr;
 
-            if (!IsRetryableError(err_code)) {
-                break;  // 不可重试的错误，直接退出
+            // 判断是否值得继续重试
+            if (!MySQLException(err_code, err_msg).IsRetryable()) {
+                break;  // 不可重试的错误（如认证失败），立即退出
             }
 
-            // 尝试重连（等待一段时间）
+            // 等待后重试（避免频繁请求加重服务器负担）
             std::this_thread::sleep_for(
                 std::chrono::milliseconds(config.retry_interval_ms));
 
         } catch (...) {
-            // 捕捉InitAndSetOptions等抛出的异常
             if (mysql_) {
                 mysql_close(mysql_);
                 mysql_ = nullptr;
             }
-            throw;  // 继续向上传递
+            throw;
         }
     }
 
-    // 所有重试都失败
-    ThrowByErrorCode(err_code,
+    // 重试耗尽，抛出最后一次的错误
+    throw MySQLException(err_code,
         "Failed after " + std::to_string(config.max_retries) +
         " retries: " + err_msg);
 }
 
-// 转义方法（只能用于转义"参数值"）（防SQL注入的简单处理）
+// ==================== SQL 构建辅助 ====================
+
 std::string MySQLConnection::Escape(const std::string& str) {
     if (!mysql_) {
-        throw MySQLConnectionException("Connection not established");
+        throw MySQLException(0, "Connection not established");
     }
 
-    // 最坏情况"都需要转义"：所以将空间设置为 2*str.size()+1（官方推荐长度）
-    // 使用vector更安全，也避免手动管理空间
+    // mysql_real_escape_string 官方建议：缓冲区大小 = 2 * 原长度 + 1
+    // 最坏情况：每个字符都需要转义（如 ' → \'）
     std::vector<char> buffer(str.size() * 2 + 1);
-    unsigned long len = mysql_real_escape_string(mysql_, buffer.data(), str.c_str(),
-                                                 static_cast<unsigned long>(str.size()));
+    
+    // 返回值是转义后的实际长度
+    unsigned long len = mysql_real_escape_string(
+        mysql_, 
+        buffer.data(), 
+        str.c_str(),
+        static_cast<unsigned long>(str.size())
+    );
 
     return std::string(buffer.data(), len);
 }
 
-/// @brief SQL语句包装器： "？为占位符 ——>sql语句中不可以包含非占位符 ？"
-/// @param sql sql语句，用"?"占位
-/// @param params 参数
-/// @return 完整的sql语句
-/// @note 对于不在Param中的类型，可以先转为string类型，在作为参数传入
-std::string MySQLConnection::BuildSQL(const std::string& sql, std::initializer_list<Param> params) {
-    // 预分配内存：初始容量为SQL长度 + 参数平均长度*参数数量（减少内存重分配）
-    std::string result;
-    result.reserve(sql.size() + params.size() * 32);
+// std::string MySQLConnection::BuildSQL(const std::string& sql, std::initializer_list<Param> params) {
+//     // 预分配内存，减少扩容次数（经验值：每个参数平均 32 字符）
+//     std::string result;
+//     result.reserve(sql.size() + params.size() * 32);
 
-    auto param = params.begin();
-    // 解析sql中的'?'占位符，并用params中的参数填入
+//     auto param = params.begin();
+    
+//     for (const char& c : sql) {
+//         if (c == '?') {
+//             if (param == params.end()) {
+//                 throw MySQLBuildException("Not enough parameters for SQL placeholders");
+//             }
+
+//             // std::visit + if constexpr：编译期类型分发
+//             std::visit([&](auto&& val) {
+//                 using T = std::decay_t<decltype(val)>;
+                
+//                 if constexpr (std::is_same_v<T, nullptr_t>) {
+//                     result += "NULL";
+//                 } else if constexpr (std::is_same_v<T, std::string>) {
+//                     // 字符串：转义 + 加引号（防 SQL 注入的核心）
+//                     result += '\'';
+//                     result += Escape(val);
+//                     result += '\'';
+//                 } else if constexpr (std::is_same_v<T, bool>) {
+//                     // MySQL 没有原生 bool，用 0/1 表示
+//                     result += val ? "1" : "0";
+//                 } else {
+//                     // 数值类型：直接转字符串（无注入风险）
+//                     result += std::to_string(val);
+//                 }
+//             }, *param);
+
+//             ++param;
+//         } else {
+//             result.push_back(c);
+//         }
+//     }
+
+//     if (param != params.end()) {
+//         throw MySQLBuildException("Too many parameters for SQL placeholders");
+//     }
+
+//     return result;
+// }
+
+// 模板实现（放在 cpp 文件中，因为只在本文件内使用）
+template<typename Iter>
+std::string MySQLConnection::BuildSQL(const std::string& sql, Iter begin, Iter end) {
+    std::string result;
+    result.reserve(sql.size() + std::distance(begin, end) * 32);
+
+    auto param = begin;
+    
     for (const char& c : sql) {
         if (c == '?') {
-            if (param == params.end()) {
-                // 参数不足
+            if (param == end) {
                 throw MySQLBuildException("Not enough parameters for SQL placeholders");
             }
 
             std::visit([&](auto&& val) {
                 using T = std::decay_t<decltype(val)>;
+                
                 if constexpr (std::is_same_v<T, nullptr_t>) {
                     result += "NULL";
                 } else if constexpr (std::is_same_v<T, std::string>) {
-                    // 字符串要加"转义单引号"
                     result += '\'';
-                    result += Escape(val);  // 进行转义：防sql注入
+                    result += Escape(val);
                     result += '\'';
                 } else if constexpr (std::is_same_v<T, bool>) {
                     result += val ? "1" : "0";
@@ -253,70 +352,17 @@ std::string MySQLConnection::BuildSQL(const std::string& sql, std::initializer_l
                 }
             }, *param);
 
-            ++param;  // 参数后移
+            ++param;
         } else {
-            // 普通字符
             result.push_back(c);
         }
     }
 
-    if (param != params.end()) {
-        // 参数过多
+    if (param != end) {
         throw MySQLBuildException("Too many parameters for SQL placeholders");
     }
 
     return result;
 }
 
-void MySQLConnection::ThrowByErrorCode(unsigned int code, const std::string& msg) {
-    switch (code) {
-        // ========== 连接类 ==========
-        case 2002:  // CR_CONNECTION_ERROR - Socket 错误
-        case 2003:  // CR_CONN_HOST_ERROR - 无法连接主机
-        case 2005:  // CR_UNKNOWN_HOST - 未知主机
-            throw MySQLConnectionException(msg);
-
-        case 2006:  // CR_SERVER_GONE_ERROR - 服务器断开
-        case 2013:  // CR_SERVER_LOST - 连接丢失
-        case 2055:  // CR_SERVER_LOST_EXTENDED
-            throw MySQLServerLostException(msg);
-
-        // ========== 认证/权限类（致命） ==========
-        case 1044:  // ER_DBACCESS_DENIED_ERROR - 无数据库权限
-        case 1045:  // ER_ACCESS_DENIED_ERROR - 认证失败
-        case 1049:  // ER_BAD_DB_ERROR - 数据库不存在
-        case 1142:  // ER_TABLEACCESS_DENIED_ERROR
-        case 1143:  // ER_COLUMNACCESS_DENIED_ERROR
-            throw MySQLAuthException(msg);
-
-        // ========== 锁相关（可重试） ==========
-        case 1213:  // ER_LOCK_DEADLOCK - 死锁
-            throw MySQLDeadlockException(msg);
-
-        case 1205:  // ER_LOCK_WAIT_TIMEOUT - 锁超时
-            throw MySQLLockTimeoutException(msg);
-
-        // ========== 约束类 ==========
-        case 1062:  // ER_DUP_ENTRY - 唯一键重复
-            throw MySQLDuplicateException(msg);
-
-        case 1451:  // ER_ROW_IS_REFERENCED_2 - 外键约束（删除）
-        case 1452:  // ER_NO_REFERENCED_ROW_2 - 外键约束（插入）
-            throw MySQLForeignKeyException(msg);
-
-        // ========== 查询类 ==========
-        case 1064:  // ER_PARSE_ERROR - SQL 语法错误
-        case 1054:  // ER_BAD_FIELD_ERROR - 未知列
-        case 1146:  // ER_NO_SUCH_TABLE - 表不存在
-        case 1109:  // ER_UNKNOWN_TABLE
-        case 1048:  // ER_BAD_NULL_ERROR - NOT NULL 约束
-        case 1406:  // ER_DATA_TOO_LONG - 数据过长
-            throw MySQLQueryException(msg);
-
-        // ========== 兜底 ==========
-        default:
-            throw MySQLUnknowException("[" + std::to_string(code) + "] " + msg);
-    }
-}
-
-} // namespace user
+} // namespace user_service

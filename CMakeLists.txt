@@ -52,6 +52,11 @@ find_package(Protobuf REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
 find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin)
 
+# 查找 OpenSSL（jwt_service 需要）
+find_package(OpenSSL REQUIRED)
+
+# 查找 fmt
+find_package(fmt REQUIRED)
 
 add_subdirectory(src)
 add_subdirectory(api)
