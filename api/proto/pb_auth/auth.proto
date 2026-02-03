@@ -1,66 +1,76 @@
+// 版本声明：使用protobuf3语法
 syntax = "proto3";
 
-package auth;
+package pb_auth;
 
 import "google/protobuf/timestamp.proto";
 import "pb_common/result.proto";
 
-// ==================== 枚举 ====================
+// ==================== 枚举定义 ====================
 
-enum VerifyCodeType {
-    VERIFY_CODE_TYPE_UNSPECIFIED = 0;
-    REGISTER = 1;
-    LOGIN = 2;
-    RESET_PASSWORD = 3;
+// 短信验证码使用场景
+enum SmsScene {
+    SMS_SCENE_UNKNOWN = 0;       // 未知场景（默认值，禁止业务使用）
+    SMS_SCENE_REGISTER = 1;      // 注册场景
+    SMS_SCENE_LOGIN = 2;         // 登录场景
+    SMS_SCENE_RESET_PASSWORD = 3;// 重置密码
+    SMS_SCENE_DELETE_USER = 4;   // 注销账号
 }
 
-// ==================== 通用消息 ====================
+// 用户角色枚举（新增）
+enum UserRole {
+    USER_ROLE_USER = 0;          // 普通用户（默认）
+    USER_ROLE_ADMIN = 1;         // 管理员
+    USER_ROLE_SUPER_ADMIN = 2;   // 超级管理员
+}
 
-// 用户信息（登录/注册返回用）
+// ==================== 通用消息体定义 ====================
+
+// 用户核心信息体
 message UserInfo {
-    string id = 1;                                  // uuid
-    string mobile = 2;                              // 手机号
-    string display_name = 3;                        // 用户名
-    bool disabled = 4;                              // 是否被禁用
-    google.protobuf.Timestamp created_at = 5;       // 创建时间
+    string id = 1;                              // 用户UUID
+    string mobile = 2;                          // 手机号
+    string display_name = 3;                    // 昵称
+    UserRole role = 4;                          // 用户角色（改为枚举类型）
+    bool disabled = 5;                          // 是否禁用
+    google.protobuf.Timestamp created_at = 6;   // 创建时间
 }
 
-// Token 对
+// JWT双令牌对
 message TokenPair {
     string access_token = 1;
     string refresh_token = 2;
-    //expires_in 指 Access Token 的过期时间，因为客户端只需要关心 Access Token 何时过期。——> 客户端可能需要在过期前主动刷新  
-    int64 expires_in = 3;
+    int64 expires_in = 3;     // access_token过期时间（秒）
 }
 
-// ==================== 验证码 ====================
+// ==================== 短信验证码接口 ====================
 
 message SendVerifyCodeRequest {
     string mobile = 1;
-    VerifyCodeType type = 2;
+    SmsScene scene = 2;
 }
 
 message SendVerifyCodeResponse {
-    common.Result result = 1;
-    int32 retry_after = 2;
+    pb_common.Result result = 1;
+    int32 retry_after = 2;        // 重发冷却时间（秒）
 }
 
-// ==================== 注册 ====================
+// ==================== 注册接口 ====================
 
 message RegisterRequest {
     string mobile = 1;
     string verify_code = 2;
     string password = 3;
-    string display_name = 4;
+    string display_name = 4;      // 可选
 }
 
 message RegisterResponse {
-    common.Result result = 1;
+    pb_common.Result result = 1;
     UserInfo user = 2;
     TokenPair tokens = 3;
 }
 
-// ==================== 登录 ====================
+// ==================== 登录接口 ====================
 
 message LoginByPasswordRequest {
     string mobile = 1;
@@ -68,7 +78,7 @@ message LoginByPasswordRequest {
 }
 
 message LoginByPasswordResponse {
-    common.Result result = 1;
+    pb_common.Result result = 1;
     UserInfo user = 2;
     TokenPair tokens = 3;
 }
@@ -79,19 +89,19 @@ message LoginByCodeRequest {
 }
 
 message LoginByCodeResponse {
-    common.Result result = 1;
+    pb_common.Result result = 1;
     UserInfo user = 2;
     TokenPair tokens = 3;
 }
 
-// ==================== Token 管理 ====================
+// ==================== Token管理接口 ====================
 
 message RefreshTokenRequest {
     string refresh_token = 1;
 }
 
 message RefreshTokenResponse {
-    common.Result result = 1;
+    pb_common.Result result = 1;
     TokenPair tokens = 2;
 }
 
@@ -100,10 +110,10 @@ message LogoutRequest {
 }
 
 message LogoutResponse {
-    common.Result result = 1;
+    pb_common.Result result = 1;
 }
 
-// ==================== 密码管理 ====================
+// ==================== 密码管理接口 ====================
 
 message ResetPasswordRequest {
     string mobile = 1;
@@ -112,20 +122,22 @@ message ResetPasswordRequest {
 }
 
 message ResetPasswordResponse {
-    common.Result result = 1;
+    pb_common.Result result = 1;
 }
 
-// ==================== Token 验证（内部服务调用） ====================
+// ==================== 内部服务调用 - Token验证接口 ====================
 
 message ValidateTokenRequest {
     string access_token = 1;
 }
 
 message ValidateTokenResponse {
-    common.Result result = 1;
-    bool valid = 2;
-    string user_id = 3;
-    google.protobuf.Timestamp expires_at = 4;
+    pb_common.Result result = 1;
+    string user_id = 2;                          // 用户数据库ID（内部使用）
+    string user_uuid = 3;                        // 用户UUID（对外标识）
+    string mobile = 4;                           // 手机号
+    UserRole role = 5;                           // 用户角色（新增）
+    google.protobuf.Timestamp expires_at = 6;   // 过期时间
 }
 
 // ==================== 服务定义 ====================
@@ -141,13 +153,13 @@ service AuthService {
     rpc LoginByPassword(LoginByPasswordRequest) returns (LoginByPasswordResponse);
     rpc LoginByCode(LoginByCodeRequest) returns (LoginByCodeResponse);
     
-    // Token 管理
+    // Token管理
     rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
     rpc Logout(LogoutRequest) returns (LogoutResponse);
     
-    // 密码（用户忘记密码，通过手机验证码来重置密码）
+    // 密码重置
     rpc ResetPassword(ResetPasswordRequest) returns (ResetPasswordResponse);
     
-    // 内部验证
+    // 内部服务Token验证（禁止客户端调用）
     rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
 }

@@ -19,9 +19,22 @@ struct TokenPair {
 
 /// @brief Access Token 解析后的载荷
 struct AccessTokenPayload {
-    std::string user_id;        ///< 用户 UUID
+    int64_t user_id;            ///< 数据库用户ID
+    std::string user_uuid;      ///< 用户 UUID（对外标识）
+    std::string mobile;         ///< 手机号
+    UserRole role;              ///< 用户身份
     std::chrono::system_clock::time_point expires_at;  ///< 过期时间
 };
+
+/// @brief Token 验证结果（ValidateToken 返回）
+struct TokenValidationResult {
+    int64_t user_id = 0;        ///< 数据库用户ID
+    std::string user_uuid;      ///< 用户 UUID
+    std::string mobile;         ///< 手机号
+    UserRole role;              ///< 用户身份
+    std::chrono::system_clock::time_point expires_at;  ///< 过期时间
+};
+
 
 // ============================================================================
 // 认证业务相关结构体

@@ -275,10 +275,28 @@ protected:
         return "";
     }
     
-    // 清除短信发送间隔限制（测试专用）
-    void ClearSmsInterval(const std::string& mobile) {
-        std::string key = "sms:interval:" + mobile;
-        redis_client_->Del(key);
+    // ✅ 清除所有 SMS 相关缓存（测试专用，绕过 60 秒间隔限制）
+    void ClearAllSmsCache(const std::string& mobile) {
+        // 清除间隔限制（全局，不分场景）
+        redis_client_->Del("sms:interval:" + mobile);
+        
+        // 清除各场景的验证码
+        redis_client_->Del("sms:code:register:" + mobile);
+        redis_client_->Del("sms:code:login:" + mobile);
+        redis_client_->Del("sms:code:reset_password:" + mobile);
+        redis_client_->Del("sms:code:delete_user:" + mobile);
+        
+        // 清除各场景的验证次数
+        redis_client_->Del("sms:verify_count:register:" + mobile);
+        redis_client_->Del("sms:verify_count:login:" + mobile);
+        redis_client_->Del("sms:verify_count:reset_password:" + mobile);
+        redis_client_->Del("sms:verify_count:delete_user:" + mobile);
+        
+        // 清除各场景的锁定
+        redis_client_->Del("sms:lock:register:" + mobile);
+        redis_client_->Del("sms:lock:login:" + mobile);
+        redis_client_->Del("sms:lock:reset_password:" + mobile);
+        redis_client_->Del("sms:lock:delete_user:" + mobile);
     }
     
     void PrintStep(const std::string& step) {
@@ -602,7 +620,8 @@ TEST_F(UserFlowIntegrationTest, CompleteUserLifecycle) {
     // ==================== 13. 发送注销验证码 ====================
     PrintStep("13. Send Delete Account Verify Code");
     {
-        ClearSmsInterval(test_mobile);  // 清除间隔限制
+        // ✅ 清除 SMS 缓存，绕过 60 秒间隔限制
+        ClearAllSmsCache(test_mobile);
         
         auto result = auth_service_->SendVerifyCode(test_mobile, SmsScene::DeleteUser);
         ASSERT_TRUE(result.IsOk()) << "Send delete code failed: " << result.message 
@@ -673,7 +692,8 @@ TEST_F(UserFlowIntegrationTest, LoginByCodeFlow) {
     // 发送登录验证码
     PrintStep("1. Send Login Verify Code");
     {
-        ClearSmsInterval(test_mobile);  // 清除间隔限制
+        // ✅ 清除 SMS 缓存，绕过 60 秒间隔限制
+        ClearAllSmsCache(test_mobile);
         
         auto result = auth_service_->SendVerifyCode(test_mobile, SmsScene::Login);
         ASSERT_TRUE(result.IsOk()) << "Send login code failed: " << result.message 
@@ -729,7 +749,8 @@ TEST_F(UserFlowIntegrationTest, ResetPasswordFlow) {
     // 发送重置密码验证码
     PrintStep("1. Send Reset Password Verify Code");
     {
-        ClearSmsInterval(test_mobile);  // 清除间隔限制
+        // ✅ 清除 SMS 缓存，绕过 60 秒间隔限制
+        ClearAllSmsCache(test_mobile);
         
         auto result = auth_service_->SendVerifyCode(test_mobile, SmsScene::ResetPassword);
         ASSERT_TRUE(result.IsOk()) << "Send reset code failed: " << result.message
@@ -804,8 +825,10 @@ TEST_F(UserFlowIntegrationTest, ErrorHandling) {
     // 3. 重复注册
     PrintStep("3. Duplicate Register");
     {
+        // ✅ 清除 SMS 缓存，绕过 60 秒间隔限制
+        ClearAllSmsCache(test_mobile);
+        
         // 先正常注册
-        ClearSmsInterval(test_mobile);  // 清除间隔限制
         auth_service_->SendVerifyCode(test_mobile, SmsScene::Register);
         std::string code = GetSmsCodeFromRedis("register", test_mobile);
         auto first_result = auth_service_->Register(test_mobile, code, "Password123", "TestUser");

@@ -1,49 +1,122 @@
-# configs/config.yaml
+# ============================================================================
+# User Service 配置文件
+# ============================================================================
+# 环境：development / staging / production
+# 敏感信息建议使用环境变量覆盖，如：
+#   USER_SERVICE_MYSQL_PASSWORD=xxx
+#   USER_SERVICE_JWT_SECRET=xxx
+# ============================================================================
 
+# ==================== 服务器配置 ====================
 server:
   host: "0.0.0.0"
   grpc_port: 50051
   metrics_port: 9090
+  
+  # 服务名称（用于服务发现）
+  service_name: "user-service"
+  
+  # gRPC 配置
+  grpc:
+    max_receive_message_size: 4194304    # 4MB
+    max_send_message_size: 4194304       # 4MB
+    keepalive_time_ms: 30000             # 30秒发送一次 keepalive
+    keepalive_timeout_ms: 10000          # 10秒等待 keepalive 响应
+    max_connection_idle_ms: 300000       # 空闲连接 5 分钟后关闭
 
+# ==================== MySQL 配置 ====================
 mysql:
   host: "localhost"
   port: 3306
   database: "user_service"
   username: "root"
-  password: "root123"
+  password: "@txylj2864"                    # 生产环境请用环境变量 USER_SERVICE_MYSQL_PASSWORD
   pool_size: 10
   
   # 超时配置（毫秒）
-  connection_timeout_ms: 5000
-  # read_timeout_ms: 30000
-  # write_timeout_ms: 30000
+  connection_timeout_ms: 5000            # 连接超时 5 秒
+  read_timeout_ms: 30000                 # 读超时 30 秒
+  write_timeout_ms: 30000                # 写超时 30 秒
   
-  # # 重试配置
-  # max_retries: 3
-  # retry_interval_ms: 1000
+  # 重试配置
+  max_retries: 3                         # 最大重试次数
+  retry_interval_ms: 1000                # 重试间隔 1 秒
   
-  # # 其他配置
-  # auto_reconnect: true
+  # 连接池配置
+  min_idle_connections: 2                # 最小空闲连接数
+  max_idle_time_ms: 600000               # 空闲连接最大存活时间 10 分钟
+  connection_lifetime_ms: 3600000        # 连接最大生命周期 1 小时
+  
+  # 其他配置
+  auto_reconnect: true
   charset: "utf8mb4"
+  collation: "utf8mb4_unicode_ci"
+  
+  # SSL 配置（生产环境推荐启用）
+  ssl:
+    enabled: false
+    ca_cert: ""                          # CA 证书路径
+    client_cert: ""                      # 客户端证书
+    client_key: ""                       # 客户端私钥
 
+# ==================== Redis 配置 ====================
 redis:
   host: "localhost"
   port: 6379
-  password: ""
+  password: ""                           # 生产环境请用环境变量 USER_SERVICE_REDIS_PASSWORD
   db: 0
   pool_size: 5
-  # connect_timeout_ms: 0
-  # socket_timeout_ms: 0
   
-kafka:
-  # ============ 基础连接 ============
-  brokers: "localhost:9092"
-  client_id: "user-service"
-  user_events: "user-events"
+  # 超时配置（毫秒）
+  connect_timeout_ms: 3000               # 连接超时 3 秒
+  socket_timeout_ms: 3000                # 读写超时 3 秒
+  
+  # 连接池配置
+  wait_timeout_ms: 100                   # 等待可用连接超时
+  max_idle_time_ms: 300000               # 空闲连接最大存活时间 5 分钟
+  
+  # 重试配置
+  max_retries: 3
+  retry_interval_ms: 100
+  
+  # 哨兵模式（可选，与单机模式二选一）
+  sentinel:
+    enabled: false
+    master_name: "mymaster"
+    nodes:
+      - "localhost:26379"
+      - "localhost:26380"
+      - "localhost:26381"
+  
+  # 集群模式（可选）
+  cluster:
+    enabled: false
+    nodes:
+      - "localhost:7000"
+      - "localhost:7001"
+      - "localhost:7002"
 
-  # ============ Producer 配置 ============
+# ==================== Kafka 配置 ====================
+kafka:
+  # 基础连接
+  brokers: "localhost:9092"              # 多个 broker 用逗号分隔
+  client_id: "user-service"
+  
+  # Topic 配置
+  topics:
+    user_events: "user-events"           # 用户事件 topic
+    user_audit: "user-audit"             # 审计日志 topic
+  
+  # 安全配置（生产环境推荐）
+  security:
+    protocol: "PLAINTEXT"                # PLAINTEXT / SASL_PLAINTEXT / SASL_SSL
+    sasl_mechanism: ""                   # PLAIN / SCRAM-SHA-256 / SCRAM-SHA-512
+    sasl_username: ""
+    sasl_password: ""
+  
+  # Producer 配置
   producer:
-    acks: "all"                          # 最高可靠性
+    acks: "all"                          # 最高可靠性：all / 1 / 0
     enable_idempotence: true             # 幂等性，防重复
     retries: 5                           # 重试次数
     retry_backoff_ms: 200                # 重试间隔
@@ -51,73 +124,228 @@ kafka:
     
     batch_size: 65536                    # 批次大小 64KB
     linger_ms: 5                         # 批量等待 5ms
-    compression_codec: "lz4"             # 压缩算法
+    compression_codec: "lz4"             # 压缩算法：none / gzip / snappy / lz4 / zstd
     
     queue_buffering_max_messages: 100000 # 本地队列最大消息数
     queue_buffering_max_kbytes: 1048576  # 本地队列最大 1GB
 
-  # ============ Consumer 配置 ============
+  # Consumer 配置
   consumer:
     group_id: "user-service-group"
-    auto_offset_reset: "earliest"        # 从最早开始消费
+    auto_offset_reset: "earliest"        # earliest / latest
     enable_auto_commit: false            # 手动提交（推荐）
     
     max_poll_records: 500                # 单次拉取最大消息数
     session_timeout_ms: 45000            # 会话超时 45s
     heartbeat_interval_ms: 3000          # 心跳间隔 3s
+    
+    # 消费者并发
+    concurrency: 3                       # 并发消费者数量
 
-  # ============ 网络配置 ============
+  # 网络配置
   network:
     socket_timeout_ms: 60000
     reconnect_backoff_ms: 100
     reconnect_backoff_max_ms: 10000
 
+# ==================== ZooKeeper 配置 ====================
 zookeeper:
-  hosts: "localhost:2181"
+  hosts: "localhost:2181"                # 多个节点用逗号分隔
   session_timeout_ms: 30000
+  connection_timeout_ms: 10000
+  
+  # 服务注册
   service_path: "/services/user-service"
+  
+  # 认证（可选）
+  auth:
+    scheme: ""                           # digest / sasl
+    credentials: ""
 
-# ============ 业务配置 ============
-
-security:
-  jwt_secret: "your-super-secret-key-change-in-production"
-  jwt_issuer: "user-service"
-  access_token_ttl_seconds: 900       # 15分钟
-  refresh_token_ttl_seconds: 604800   # 7天
-
-sms:
-  code_len: 6
-  code_ttl_seconds: 300               # 5分钟
-  send_interval_seconds: 60           # 60秒
-  max_retry_count: 5
-  retry_ttl_seconds: 300              # 5分钟
-  lock_seconds: 1800                  # 30分钟
-
-login:
-  max_failed_attempts: 5              # 最多失败5次
-  failed_attempts_window: 900         # 15分钟内
-  lock_duration_seconds: 1800         # 锁定30分钟
-  max_sessions_per_user: 5            # 最多5个设备
-  kick_oldest_session: true
-  enable_password_login: true
-  enable_sms_login: true
-  require_captcha: false
-  captcha_after_failed_attempts: 3
-
-password:
-  min_length: 8
-  max_length: 32
-  require_uppercase: false
-  require_lowercase: false
-  require_digit: true
-  require_special_char: false
-  expire_days: 0                      # 0 = 不过期
-  history_count: 0                    # 0 = 不检查历史密码
-
+# ==================== 日志配置 ====================
 log:
-  level: "trace"
+  level: "debug"                          # trace / debug / info / warn / error / critical
   path: "./logs"
   filename: "user-service.log"
-  max_size: 10485760  # 10MB
-  max_files: 5
-  console_output: true
+  
+  # 日志轮转
+  max_size: 10485760                     # 单文件最大 10MB
+  max_files: 5                           # 保留最近 5 个文件
+  max_age_days: 30                       # 日志保留 30 天
+  
+  # 输出配置
+  console_output: true                   # 是否输出到控制台
+  json_format: false                     # 是否使用 JSON 格式（便于 ELK 采集）
+  
+  # 日志内容
+  include_caller: true                   # 是否包含调用位置
+  include_stacktrace_on_error: true      # error 级别是否包含堆栈
+
+# ============================================================================
+# 业务配置
+# ============================================================================
+
+# ==================== JWT/安全配置 ====================
+security:
+  # JWT 配置
+  jwt_secret: "your-super-secret-key-change-in-production-at-least-32-bytes!"
+  jwt_issuer: "user-service"
+  jwt_audience: "user-service-clients"
+  
+  # Token 有效期
+  access_token_ttl_seconds: 900          # Access Token 15 分钟
+  refresh_token_ttl_seconds: 604800      # Refresh Token 7 天
+  
+  # Token 签名算法
+  jwt_algorithm: "HS256"                 # HS256 / HS384 / HS512 / RS256
+  
+  # RSA 密钥（如果使用 RS256）
+  rsa_private_key_path: ""
+  rsa_public_key_path: ""
+
+# ==================== 短信验证码配置 ====================
+sms:
+  # 验证码配置
+  code_len: 6                            # 验证码长度
+  code_ttl_seconds: 300                  # 有效期 5 分钟
+  
+  # 发送限制
+  send_interval_seconds: 60              # 发送间隔 60 秒
+  daily_limit_per_mobile: 10             # 单手机号每日限制
+  daily_limit_per_ip: 50                 # 单 IP 每日限制
+  
+  # 验证限制（防暴力破解）
+  max_retry_count: 5                     # 最大验证错误次数
+  retry_ttl_seconds: 300                 # 错误次数统计窗口 5 分钟
+  lock_seconds: 1800                     # 锁定时长 30 分钟
+  
+  # 短信服务商配置（按需启用）
+  provider: "mock"                       # mock / aliyun / tencent
+  aliyun:
+    access_key_id: ""
+    access_key_secret: ""
+    sign_name: ""
+    template_code: ""
+  tencent:
+    secret_id: ""
+    secret_key: ""
+    app_id: ""
+    sign_name: ""
+    template_id: ""
+
+# ==================== 登录安全配置 ====================
+login:
+  # 登录失败锁定策略
+  max_failed_attempts: 5                 # 最大失败次数
+  failed_attempts_window: 900            # 失败计数窗口 15 分钟
+  lock_duration_seconds: 1800            # 锁定时长 30 分钟
+  
+  # 会话管理
+  max_sessions_per_user: 5               # 单用户最大同时登录设备数
+  kick_oldest_session: true              # 超出时踢掉最旧会话
+  
+  # 登录方式开关
+  enable_password_login: true            # 允许密码登录
+  enable_sms_login: true                 # 允许验证码登录
+  enable_oauth_login: false              # 允许第三方登录
+  
+  # 图形验证码
+  require_captcha: false                 # 是否强制图形验证码
+  captcha_after_failed_attempts: 3       # 失败 N 次后需要验证码
+  
+  # 安全增强
+  require_2fa: false                     # 是否强制双因素认证
+  remember_device_days: 30               # 记住设备天数
+
+# ==================== 密码策略配置 ====================
+password:
+  # 长度要求
+  min_length: 8
+  max_length: 32
+  
+  # 复杂度要求
+  require_uppercase: false               # 需要大写字母
+  require_lowercase: false               # 需要小写字母
+  require_digit: true                    # 需要数字
+  require_special_char: false            # 需要特殊字符
+  
+  # 密码过期
+  expire_days: 0                         # 0 = 不过期
+  warn_days_before_expire: 7             # 过期前 N 天提醒
+  
+  # 历史密码检查
+  history_count: 0                       # 0 = 不检查历史密码
+  
+  # 加密配置
+  bcrypt_cost: 12                        # bcrypt cost factor（10-14）
+
+# ==================== 限流配置 ====================
+rate_limit:
+  enabled: true
+  
+  # 全局限流
+  global:
+    requests_per_second: 1000
+    burst_size: 2000
+  
+  # API 级别限流
+  api:
+    send_verify_code:
+      requests_per_minute: 5             # 每分钟最多 5 次
+      requests_per_hour: 20              # 每小时最多 20 次
+    login:
+      requests_per_minute: 10
+      requests_per_hour: 100
+    register:
+      requests_per_minute: 5
+      requests_per_hour: 20
+
+# ==================== 健康检查配置 ====================
+health:
+  enabled: true
+  
+  # 检查间隔
+  check_interval_seconds: 30
+  
+  # 检查项
+  checks:
+    mysql: true
+    redis: true
+    kafka: false                         # 如果不使用 Kafka 可以关闭
+    zookeeper: false
+
+# ==================== 监控配置 ====================
+metrics:
+  enabled: true
+  
+  # Prometheus 配置
+  prometheus:
+    enabled: true
+    path: "/metrics"
+  
+  # 业务指标
+  business:
+    track_login_count: true
+    track_register_count: true
+    track_api_latency: true
+
+# ==================== 环境覆盖说明 ====================
+# 以下配置可通过环境变量覆盖（推荐用于敏感信息）：
+#
+# USER_SERVICE_MYSQL_HOST
+# USER_SERVICE_MYSQL_PORT
+# USER_SERVICE_MYSQL_DATABASE
+# USER_SERVICE_MYSQL_USERNAME
+# USER_SERVICE_MYSQL_PASSWORD
+#
+# USER_SERVICE_REDIS_HOST
+# USER_SERVICE_REDIS_PORT
+# USER_SERVICE_REDIS_PASSWORD
+#
+# USER_SERVICE_JWT_SECRET
+# USER_SERVICE_JWT_ISSUER
+#
+# USER_SERVICE_KAFKA_BROKERS
+#
+# USER_SERVICE_LOG_LEVEL
+# ============================================================================

@@ -23,40 +23,40 @@ AuthService::AuthService(std::shared_ptr<Config> config,
     {}
 
 // 发送验证码
-Result<int32_t> AuthService::SendVerifyCode(const std::string& mobile,
-                                SmsScene scene){
+Result<int32_t> AuthService::SendVerifyCode(const std::string& mobile, SmsScene scene) {
     std::string error;
-    // 1.手机格式校验
-    if(!IsValidMobile(mobile,error)){
-        return Result<int32_t>::Fail(ErrorCode::InvalidArgument,error);
+    
+    // 1. 手机格式校验
+    if (!IsValidMobile(mobile, error)) {
+        return Result<int32_t>::Fail(ErrorCode::InvalidArgument, error);
     }
 
-    // 2.业务校验
-    if(scene==SmsScene::Register){     // 注册业务
-        // 检查手机号是否已被注册（不可重复注册）
-        auto res=user_db_->ExistsByMobile(mobile);
-        if(!res.IsOk()){
-            // 执行错误
-            return Result<int32_t>::Fail(res.code,res.message);
+    // 2. 业务校验
+    if (scene == SmsScene::Register) {
+        // 注册：手机号不能已存在
+        auto res = user_db_->ExistsByMobile(mobile);
+        if (!res.IsOk()) {
+            return Result<int32_t>::Fail(res.code, res.message);
         }
-        if(res.data.value()){
-            // 手机号以注册，不可重复注册
-            ErrorCode code=ErrorCode::MobileTaken;
-            return Result<int32_t>::Fail(code,"该手机号已被用于注册");
+        if (res.Value()) {
+            return Result<int32_t>::Fail(ErrorCode::MobileTaken, "该手机号已被用于注册");
         }
-    }else if(scene==SmsScene::Login){  // 登录业务
-        // 检查手机号是否已注册
-        auto res=user_db_->ExistsByMobile(mobile);
-        if(!res.IsOk()) return Result<int32_t>::Fail(res.code,res.message);
-        if(!res.data.value()){
-            // 还未注册，需要先注册才可登录
-            ErrorCode code=ErrorCode::UserNotFound;
-            return Result<int32_t>::Fail(code,"该手机号未注册");
+    } else if (scene == SmsScene::Login || 
+               scene == SmsScene::ResetPassword || 
+               scene == SmsScene::DeleteUser) {
+        // 登录/重置密码/注销：手机号必须已存在
+        auto res = user_db_->ExistsByMobile(mobile);
+        if (!res.IsOk()) {
+            return Result<int32_t>::Fail(res.code, res.message);
+        }
+        if (!res.Value()) {
+            return Result<int32_t>::Fail(ErrorCode::UserNotFound, "该手机号未注册");
         }
     }
+    // 其他场景不做额外校验
 
-    // 3.发送短信
-    auto send_captcha_result=sms_srv_->SendCaptcha(scene,mobile);
+    // 3. 发送短信
+    auto send_captcha_result = sms_srv_->SendCaptcha(scene, mobile);
     return send_captcha_result;
 }
 
@@ -103,7 +103,7 @@ Result<AuthResult> AuthService::Register(const std::string& mobile,
     auto& created_user=create_res.data.value();    // 创建的user
 
     // 5.生成Token
-    auto token_pair=jwt_srv_->GenerateTokenPair(std::to_string(created_user.id));
+    auto token_pair=jwt_srv_->GenerateTokenPair(created_user);
 
     // 6.存储Refresh Token
     auto store_res=StoreRefreshToken(created_user.id,token_pair.refresh_token);
@@ -167,7 +167,7 @@ Result<AuthResult> AuthService::LoginByPassword(const std::string& mobile,
     ClearLoginFailure(mobile);
 
     // 7.生成Token
-    auto token_pair=jwt_srv_->GenerateTokenPair(std::to_string(user.id));
+    auto token_pair=jwt_srv_->GenerateTokenPair(user);
 
     // 8.存储Refresh Token
     auto store_res=StoreRefreshToken(user.id,token_pair.refresh_token);
@@ -222,7 +222,7 @@ Result<AuthResult> AuthService::LoginByCode(const std::string& mobile,
     ClearLoginFailure(mobile);
 
     // 6. 生成 Token
-    auto token_pair = jwt_srv_->GenerateTokenPair(std::to_string(user.id));
+    auto token_pair = jwt_srv_->GenerateTokenPair(user);
 
     // 7. 存储 Refresh Token
     auto store_res = StoreRefreshToken(user.id, token_pair.refresh_token);
@@ -327,6 +327,8 @@ Result<TokenPair> AuthService::RefreshToken(const std::string& refresh_token){
         return Result<TokenPair>::Fail(ErrorCode::UserDisabled, "账号已被禁用");
     }
 
+    auto& user=user_res.Value();
+
     // 4.校验令牌哈希是否有效（数据库中存在且未过期）
     std::string token_hash=jwt_srv_->HashToken(refresh_token);
 
@@ -343,7 +345,7 @@ Result<TokenPair> AuthService::RefreshToken(const std::string& refresh_token){
     token_repo_->DeleteByTokenHash(token_hash);
 
     // 6.生成新的Token对
-    auto new_tokens=jwt_srv_->GenerateTokenPair(user_id_str);
+    auto new_tokens=jwt_srv_->GenerateTokenPair(user);
 
     // 7.存储新的Refresh Token的哈希值
     auto store_res=StoreRefreshToken(user_id,new_tokens.refresh_token);
@@ -395,6 +397,37 @@ Result<void> AuthService::LogoutAll(const std::string& user_uuid){
 
     LOG_INFO("User logged out from all devices, user_id={}", user_id);
     return Result<void>::Ok();
+}
+
+Result<TokenValidationResult> AuthService::ValidateAccessToken(const std::string& access_token) {
+    TokenValidationResult validation;
+    
+    // 空 token 快速返回
+    if (access_token.empty()) {
+        return Result<TokenValidationResult>::Fail(ErrorCode::TokenMissing, "Access token is required");
+    }
+    
+    // 1. 解析 JWT
+    auto payload_result = jwt_srv_->VerifyAccessToken(access_token);
+    if (!payload_result.IsOk()) {
+        return Result<TokenValidationResult>::Fail(payload_result.code, payload_result.message);
+    }
+    
+    const auto& payload = payload_result.Value();
+    
+    // 2. 检查是否在黑名单中（可选）
+    // std::string blacklist_key = "token:blacklist:" + payload.user_uuid;
+    // if (redis_cli_->Exists(blacklist_key)) {
+    //     return Result<TokenValidationResult>::Fail(ErrorCode::TokenRevoked, "Token has been revoked");
+    // }
+    
+    // 3. 填充验证结果
+    validation.user_id = payload.user_id;
+    validation.user_uuid = payload.user_uuid;
+    validation.mobile = payload.mobile;
+    validation.expires_at = payload.expires_at;
+    
+    return Result<TokenValidationResult>::Ok(validation);
 }
 
 // ============================================================================

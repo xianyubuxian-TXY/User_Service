@@ -1,6 +1,5 @@
 -- scripts/init_db.sql
 
--- 创建数据库
 CREATE DATABASE IF NOT EXISTS user_service 
     CHARACTER SET utf8mb4 
     COLLATE utf8mb4_unicode_ci;
@@ -14,17 +13,19 @@ CREATE TABLE IF NOT EXISTS `users` (
     `mobile` VARCHAR(20) DEFAULT NULL COMMENT '手机号',
     `display_name` VARCHAR(128) DEFAULT NULL COMMENT '显示名称',
     `password_hash` VARCHAR(256) NOT NULL COMMENT '密码哈希',
+    `role` TINYINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '角色: 0-普通用户, 1-管理员, 2-超级管理员',
     `disabled` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否禁用: 0-否, 1-是',
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_uuid` (`uuid`),
     UNIQUE KEY `uk_mobile` (`mobile`),
+    KEY `idx_role` (`role`),
     KEY `idx_disabled` (`disabled`),
     KEY `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表';
 
--- 用户会话表（用于 Token 管理）
+-- 用户会话表
 CREATE TABLE IF NOT EXISTS `user_sessions` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     `user_id` BIGINT UNSIGNED NOT NULL COMMENT '用户ID',
@@ -37,3 +38,10 @@ CREATE TABLE IF NOT EXISTS `user_sessions` (
     KEY `idx_expires_at` (`expires_at`),
     CONSTRAINT `fk_session_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户会话表';
+
+-- ============================================================================
+-- 初始化超级管理员（可选）
+-- ============================================================================
+-- 密码: Admin@123456（需要用你的 PasswordHelper::Hash 生成实际哈希值）
+-- INSERT INTO `users` (`uuid`, `mobile`, `display_name`, `password_hash`, `role`) 
+-- VALUES (UUID(), '13800000000', '超级管理员', '$2a$10$...', 2);

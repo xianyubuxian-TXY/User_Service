@@ -35,9 +35,15 @@ Result<UserEntity> UserDB::Create(const UserEntity& user) {
 
         // 拼接并执行sql
         // 字段：uuid, mobile, display_name, password_hash
-        std::string sql = "INSERT INTO users (uuid, mobile, display_name, password_hash) "
-                          "VALUES (?, ?, ?, ?)";
-        conn->Execute(sql, {uuid, user.mobile, user.display_name, user.password_hash});
+        std::string sql = "INSERT INTO users (uuid, mobile, display_name, password_hash, role) "
+                          "VALUES (?, ?, ?, ?, ?)";
+        conn->Execute(sql, {
+            uuid, 
+            user.mobile, 
+            user.display_name, 
+            user.password_hash,
+            UserRoleToInt(user.role)
+        });
         
         // 通过UUID查询用户（id、created_at等是插入后自动填写的，所以需要再次获取）
         LOG_INFO("Create user success, mobile={}", user.mobile);
@@ -94,12 +100,13 @@ Result<void> UserDB::Update(const UserEntity& user) {
         // 拼接sql并执行
         // 注意：mobile 一般不允许直接修改，需要通过换绑接口（后续实现）
         std::string sql = "UPDATE users SET display_name = ?, password_hash = ?, "
-                          "disabled = ? WHERE uuid = ?";
+                          "disabled = ?, role = ? WHERE uuid = ?";
         
         int64_t affect_row = conn->Execute(sql, {
             user.display_name, 
             user.password_hash,
-            user.disabled,  // bool 转字符串
+            user.disabled,
+            UserRoleToInt(user.role),  // 新增
             user.uuid
         });
         
@@ -393,6 +400,7 @@ UserEntity UserDB::ParseRow(MySQLResult& res) {
     user.uuid          = res.GetString("uuid").value_or("");
     user.mobile        = res.GetString("mobile").value_or("");
     user.password_hash = res.GetString("password_hash").value_or("");
+    user.role          = IntToUserRole(res.GetInt("role").value_or(0));
     user.disabled      = res.GetInt("disabled").value_or(0) != 0;
     user.created_at    = res.GetString("created_at").value_or("");
     user.updated_at    = res.GetString("updated_at").value_or("");

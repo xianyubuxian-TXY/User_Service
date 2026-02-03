@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package common;
+package pb_common;
 
 // 错误码 - 与内部 C++ ErrorCode 保持一致
 enum ErrorCode {

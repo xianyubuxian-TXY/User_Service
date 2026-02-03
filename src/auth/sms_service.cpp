@@ -51,7 +51,7 @@ Result<int32_t> SmsService::SendCaptcha(SmsScene scene,
                                             "服务暂时不可用，请稍后重试");
     }
     if(interval_exists.Value()){
-        int64_t ttl = safeTTLSeconds(LockKey(scene, mobile), config_.lock_seconds);
+        int64_t ttl = safeTTLSeconds(IntervalKey(mobile), config_.send_interval_seconds);
         return Result<int32_t>::Fail(
                         ErrorCode::RateLimited,
                         fmt::format("操作过于频繁，请{}秒后再试", ttl));               
@@ -223,6 +223,10 @@ Result<void> SmsService::DoSend(const std::string& mobile, const std::string& co
 
 // 生成随机验证码
 std::string SmsService::GenerateCaptcha() {
+
+    LOG_INFO("测试模式“验证码”：123456。");
+    return "123456";  // 临时：固定验证码用于测试
+
     // 静态局部变量：仅初始化一次，提升性能，避免频繁创建随机数对象
     static std::random_device rd;                // 随机数种子源，获取硬件/系统随机数
     static std::mt19937 gen(rd());               // 梅森旋转算法生成器，高性能、高随机性

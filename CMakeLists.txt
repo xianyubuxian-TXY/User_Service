@@ -58,8 +58,9 @@ find_package(OpenSSL REQUIRED)
 # 查找 fmt
 find_package(fmt REQUIRED)
 
-add_subdirectory(src)
 add_subdirectory(api)
+add_subdirectory(src)
+
 
 # GTest 包
 find_package(GTest REQUIRED)

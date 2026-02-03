@@ -10,6 +10,7 @@ target_link_libraries(jwt_service_test PRIVATE
     user_auth
     GTest::gtest
     GTest::gtest_main
+    GTest::gmock
 )
 
 target_include_directories(jwt_service_test PRIVATE
@@ -23,8 +24,10 @@ add_executable(token_repository_test token_repository_test.cpp)
 
 target_link_libraries(token_repository_test PRIVATE
     user_auth
+    user_service
     GTest::gtest
     GTest::gtest_main
+    GTest::gmock
 )
 
 target_include_directories(token_repository_test PRIVATE
@@ -40,6 +43,7 @@ target_link_libraries(token_cleanup_task_test PRIVATE
     user_auth
     GTest::gtest
     GTest::gtest_main
+    GTest::gmock
 )
 
 target_include_directories(token_cleanup_task_test PRIVATE
@@ -57,6 +61,7 @@ target_link_libraries(sms_service_test PRIVATE
     user_config
     GTest::gtest
     GTest::gtest_main
+    GTest::gmock
 )
 
 target_include_directories(sms_service_test PRIVATE

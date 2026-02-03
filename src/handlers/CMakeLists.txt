@@ -1,4 +1,4 @@
-add_library(user_handler auth_handler.cpp)
+add_library(user_handler auth_handler.cpp user_handler.cpp)
 
 target_include_directories(user_handler PUBLIC
     ${PROJECT_SOURCE_DIR}/include
@@ -8,4 +8,8 @@ target_include_directories(user_handler PUBLIC
 # 链接 proto_lib，自动继承其 include 路径
 target_link_libraries(user_handler PUBLIC
     proto_lib
+    user_auth
+    user_service
 )
+
+add_dependencies(user_handler proto_lib)

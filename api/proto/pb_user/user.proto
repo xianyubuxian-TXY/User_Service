@@ -1,20 +1,22 @@
 syntax = "proto3";
 
-package user;
+package pb_user;
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/wrappers.proto";
 import "pb_common/result.proto";
-
+import "pb_auth/auth.proto";
 // ==================== 通用消息 ====================
+
 
 message User {
     string id = 1;
     string mobile = 2;
-    string display_name = 3;
-    bool disabled = 4;
-    google.protobuf.Timestamp created_at = 5;
-    google.protobuf.Timestamp updated_at = 6;
+    pb_auth.UserRole role = 3;
+    string display_name = 4;
+    bool disabled = 5;
+    google.protobuf.Timestamp created_at = 6;
+    google.protobuf.Timestamp updated_at = 7;
 }
 
 // 分页请求
@@ -38,7 +40,7 @@ message GetCurrentUserRequest {
 }
 
 message GetCurrentUserResponse {
-    common.Result result = 1;
+    pb_common.Result result = 1;
     User user = 2;
 }
 
@@ -47,7 +49,7 @@ message GetUserRequest {
 }
 
 message GetUserResponse {
-    common.Result result = 1;
+    pb_common.Result result = 1;
     User user = 2;
 }
 
@@ -59,7 +61,7 @@ message UpdateUserRequest {
 }
 
 message UpdateUserResponse {
-    common.Result result = 1;
+    pb_common.Result result = 1;
     User user = 2;
 }
 
@@ -71,7 +73,7 @@ message ChangePasswordRequest {
 }
 
 message ChangePasswordResponse {
-    common.Result result = 1;
+    pb_common.Result result = 1;
 }
 
 // ==================== 删除用户（注销） ====================
@@ -81,7 +83,7 @@ message DeleteUserRequest {
 }
 
 message DeleteUserResponse {
-    common.Result result = 1;
+    pb_common.Result result = 1;
 }
 
 // ==================== 用户列表（管理员） ====================
@@ -93,7 +95,7 @@ message ListUsersRequest {
 }
 
 message ListUsersResponse {
-    common.Result result = 1;
+    pb_common.Result result = 1;
     repeated User users = 2;
     PageResponse page_info = 3;
 }

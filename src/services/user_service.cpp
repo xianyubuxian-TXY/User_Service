@@ -157,9 +157,8 @@ Result<void> UserService::ChangePassword(const std::string& user_uuid,
 
 // 删除用户（注销账号）
 Result<void> UserService::DeleteUser(const std::string& user_uuid,
-                                        const std::string verify_code,
-                                        const std::string& mobile){
-                                            std::string error;
+                                        const std::string verify_code){
+    std::string error;
 
     // 1. 参数校验
     if (user_uuid.empty()) {
