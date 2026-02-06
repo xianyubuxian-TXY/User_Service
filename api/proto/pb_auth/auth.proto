@@ -1,4 +1,3 @@
-// 版本声明：使用protobuf3语法
 syntax = "proto3";
 
 package pb_auth;

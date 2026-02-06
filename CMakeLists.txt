@@ -43,10 +43,6 @@ find_library(HIREDIS_LIB hiredis)
 find_path(REDIS_PLUS_PLUS_HEADER sw)
 find_library(REDIS_PLUS_PLUS_LIB redis++)
 
-# Kafka
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(RdKafka REQUIRED IMPORTED_TARGET rdkafka++)
-
 # gRPC
 find_package(Protobuf REQUIRED)
 find_package(gRPC CONFIG REQUIRED)

@@ -57,67 +57,6 @@ struct RedisConfig {
     std::string ToString() const;
 };
 
-// ============ Kafka Producer 配置 ============
-struct KafkaProducerConfig {
-    std::optional<std::string> acks;
-    std::optional<bool> enable_idempotence;
-    std::optional<int> retries;
-    std::optional<int> retry_backoff_ms;
-    std::optional<int> delivery_timeout_ms;
-    std::optional<int> batch_size;
-    std::optional<int> linger_ms;
-    std::optional<std::string> compression_codec;
-    std::optional<int> queue_buffering_max_messages;
-    std::optional<int> queue_buffering_max_kbytes;
-
-    std::string ToString() const;
-};
-
-// ============ Kafka Consumer 配置 ============
-struct KafkaConsumerConfig {
-    std::optional<std::string> group_id;
-    std::optional<std::string> auto_offset_reset;
-    std::optional<bool> enable_auto_commit;
-    std::optional<int> max_poll_records;
-    std::optional<int> session_timeout_ms;
-    std::optional<int> heartbeat_interval_ms;
-
-    std::string ToString() const;
-};
-
-// ============ Kafka 网络配置 ============
-struct KafkaNetworkConfig {
-    std::optional<int> socket_timeout_ms;
-    std::optional<int> reconnect_backoff_ms;
-    std::optional<int> reconnect_backoff_max_ms;
-
-    std::string ToString() const;
-};
-
-
-// ============ Kafka 主配置 ============
-struct KafkaConfig {
-    std::string brokers = "localhost:9092";
-    std::string user_events="user-events";
-    std::string client_id= "user-service";
-    
-    KafkaProducerConfig producer;
-    KafkaConsumerConfig consumer;
-    KafkaNetworkConfig network;
-
-    std::string ToString() const;
-};
-
-
-
-struct ZooKeeperConfig {
-    std::string hosts = "localhost:2181";
-    int session_timeout_ms = 30000;
-    std::string service_path = "/services/user-service";
-
-    std::string ToString() const;
-};
-
 struct LogConfig {
     std::string level = "info";
     std::string path = "./logs";
@@ -209,8 +148,6 @@ struct Config {
     ServerConfig server;
     MySQLConfig mysql;
     RedisConfig redis;
-    KafkaConfig kafka;
-    ZooKeeperConfig zookeeper;
     LogConfig log;
     
     // 业务配置

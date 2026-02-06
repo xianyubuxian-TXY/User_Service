@@ -27,7 +27,7 @@ server:
 # ==================== MySQL 配置 ====================
 mysql:
   host: "localhost"
-  port: 3306
+  port: 3307
   database: "user_service"
   username: "root"
   password: "@txylj2864"                    # 生产环境请用环境变量 USER_SERVICE_MYSQL_PASSWORD
@@ -62,7 +62,7 @@ mysql:
 # ==================== Redis 配置 ====================
 redis:
   host: "localhost"
-  port: 6379
+  port: 6380
   password: ""                           # 生产环境请用环境变量 USER_SERVICE_REDIS_PASSWORD
   db: 0
   pool_size: 5
@@ -96,58 +96,6 @@ redis:
       - "localhost:7001"
       - "localhost:7002"
 
-# ==================== Kafka 配置 ====================
-kafka:
-  # 基础连接
-  brokers: "localhost:9092"              # 多个 broker 用逗号分隔
-  client_id: "user-service"
-  
-  # Topic 配置
-  topics:
-    user_events: "user-events"           # 用户事件 topic
-    user_audit: "user-audit"             # 审计日志 topic
-  
-  # 安全配置（生产环境推荐）
-  security:
-    protocol: "PLAINTEXT"                # PLAINTEXT / SASL_PLAINTEXT / SASL_SSL
-    sasl_mechanism: ""                   # PLAIN / SCRAM-SHA-256 / SCRAM-SHA-512
-    sasl_username: ""
-    sasl_password: ""
-  
-  # Producer 配置
-  producer:
-    acks: "all"                          # 最高可靠性：all / 1 / 0
-    enable_idempotence: true             # 幂等性，防重复
-    retries: 5                           # 重试次数
-    retry_backoff_ms: 200                # 重试间隔
-    delivery_timeout_ms: 60000           # 投递总超时 60s
-    
-    batch_size: 65536                    # 批次大小 64KB
-    linger_ms: 5                         # 批量等待 5ms
-    compression_codec: "lz4"             # 压缩算法：none / gzip / snappy / lz4 / zstd
-    
-    queue_buffering_max_messages: 100000 # 本地队列最大消息数
-    queue_buffering_max_kbytes: 1048576  # 本地队列最大 1GB
-
-  # Consumer 配置
-  consumer:
-    group_id: "user-service-group"
-    auto_offset_reset: "earliest"        # earliest / latest
-    enable_auto_commit: false            # 手动提交（推荐）
-    
-    max_poll_records: 500                # 单次拉取最大消息数
-    session_timeout_ms: 45000            # 会话超时 45s
-    heartbeat_interval_ms: 3000          # 心跳间隔 3s
-    
-    # 消费者并发
-    concurrency: 3                       # 并发消费者数量
-
-  # 网络配置
-  network:
-    socket_timeout_ms: 60000
-    reconnect_backoff_ms: 100
-    reconnect_backoff_max_ms: 10000
-
 # ==================== ZooKeeper 配置 ====================
 zookeeper:
   hosts: "localhost:2181"                # 多个节点用逗号分隔
@@ -165,7 +113,7 @@ zookeeper:
 # ==================== 日志配置 ====================
 log:
   level: "debug"                          # trace / debug / info / warn / error / critical
-  path: "./logs"
+  path: "/app/logs"
   filename: "user-service.log"
   
   # 日志轮转
