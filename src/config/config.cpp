@@ -121,6 +121,34 @@ void ValidateConfig(const Config& config) {
         throw std::runtime_error("Invalid password history count: " + 
             std::to_string(config.password.history_count));
     }
+
+    // ============ 校验 ZooKeeper 配置 ============
+    if (config.zookeeper.enabled) {
+        if (config.zookeeper.hosts.empty()) {
+            throw std::runtime_error("ZooKeeper hosts is empty");
+        }
+        if (config.zookeeper.session_timeout_ms <= 0) {
+            throw std::runtime_error("Invalid ZooKeeper session timeout: " + 
+                std::to_string(config.zookeeper.session_timeout_ms));
+        }
+        if (config.zookeeper.connect_timeout_ms <= 0) {
+            throw std::runtime_error("Invalid ZooKeeper connect timeout: " + 
+                std::to_string(config.zookeeper.connect_timeout_ms));
+        }
+        if (config.zookeeper.root_path.empty()) {
+            throw std::runtime_error("ZooKeeper root path is empty");
+        }
+        if (config.zookeeper.root_path[0] != '/') {
+            throw std::runtime_error("ZooKeeper root path must start with '/'");
+        }
+        if (config.zookeeper.register_self && config.zookeeper.service_name.empty()) {
+            throw std::runtime_error("ZooKeeper service name is empty but register_self is true");
+        }
+        if (config.zookeeper.weight <= 0) {
+            throw std::runtime_error("Invalid ZooKeeper service weight: " + 
+                std::to_string(config.zookeeper.weight));
+        }
+    }
 }
 
 Config Config::LoadFromFile(const std::string& path) {
@@ -165,6 +193,33 @@ Config Config::LoadFromFile(const std::string& path) {
             if (r["wait_timeout_ms"]) config.redis.wait_timeout_ms = r["wait_timeout_ms"].as<unsigned int>();
             if (r["connect_timeout_ms"]) config.redis.connect_timeout_ms = r["connect_timeout_ms"].as<unsigned int>();
             if (r["socket_timeout_ms"]) config.redis.socket_timeout_ms = r["socket_timeout_ms"].as<unsigned int>();
+        }
+
+        // ============ ZooKeeper 配置 ============
+        if (yaml["zookeeper"]) {
+            const auto& zk = yaml["zookeeper"];
+            if (zk["hosts"]) 
+                config.zookeeper.hosts = zk["hosts"].as<std::string>();
+            if (zk["session_timeout_ms"]) 
+                config.zookeeper.session_timeout_ms = zk["session_timeout_ms"].as<int>();
+            if (zk["connect_timeout_ms"]) 
+                config.zookeeper.connect_timeout_ms = zk["connect_timeout_ms"].as<int>();
+            if (zk["root_path"]) 
+                config.zookeeper.root_path = zk["root_path"].as<std::string>();
+            if (zk["service_name"]) 
+                config.zookeeper.service_name = zk["service_name"].as<std::string>();
+            if (zk["enabled"]) 
+                config.zookeeper.enabled = zk["enabled"].as<bool>();
+            if (zk["register_self"]) 
+                config.zookeeper.register_self = zk["register_self"].as<bool>();
+            if (zk["weight"]) 
+                config.zookeeper.weight = zk["weight"].as<int>();
+            if (zk["region"]) 
+                config.zookeeper.region = zk["region"].as<std::string>();
+            if (zk["zone"]) 
+                config.zookeeper.zone = zk["zone"].as<std::string>();
+            if (zk["version"]) 
+                config.zookeeper.version = zk["version"].as<std::string>();
         }
 
         // ============ Security（已更新） ============
@@ -267,6 +322,28 @@ void Config::LoadFromEnv() {
     // Redis
     if (const char* env = std::getenv("REDIS_HOST")) redis.host = env;
     
+    // ZooKeeper
+    if (const char* env = std::getenv("ZK_HOSTS")) zookeeper.hosts = env;
+    if (const char* env = std::getenv("ZK_SESSION_TIMEOUT")) {
+        zookeeper.session_timeout_ms = std::atoi(env);
+    }
+    if (const char* env = std::getenv("ZK_CONNECT_TIMEOUT")) {
+        zookeeper.connect_timeout_ms = std::atoi(env);
+    }
+    if (const char* env = std::getenv("ZK_ROOT_PATH")) zookeeper.root_path = env;
+    if (const char* env = std::getenv("ZK_SERVICE_NAME")) zookeeper.service_name = env;
+    if (const char* env = std::getenv("ZK_ENABLED")) {
+        zookeeper.enabled = (std::string(env) == "true" || std::string(env) == "1");
+    }
+    if (const char* env = std::getenv("ZK_REGISTER_SELF")) {
+        zookeeper.register_self = (std::string(env) == "true" || std::string(env) == "1");
+    }
+    if (const char* env = std::getenv("ZK_WEIGHT")) {
+        zookeeper.weight = std::atoi(env);
+    }
+    if (const char* env = std::getenv("ZK_REGION")) zookeeper.region = env;
+    if (const char* env = std::getenv("ZK_ZONE")) zookeeper.zone = env;
+    if (const char* env = std::getenv("ZK_VERSION")) zookeeper.version = env;
     
     // Security
     if (const char* env = std::getenv("JWT_SECRET")) security.jwt_secret = env;
@@ -368,6 +445,24 @@ std::string RedisConfig::ToString() const {
     return oss.str();
 }
 
+// ============ ZooKeeperConfig::ToString ============
+std::string ZooKeeperConfig::ToString() const {
+    std::ostringstream oss;
+    oss << "=== ZooKeeper Config ===" << std::endl;
+    oss << "Enabled: " << (enabled ? "Yes" : "No") << std::endl;
+    oss << "Hosts: " << hosts << std::endl;
+    oss << "Session Timeout: " << session_timeout_ms << " ms" << std::endl;
+    oss << "Connect Timeout: " << connect_timeout_ms << " ms" << std::endl;
+    oss << "Root Path: " << root_path << std::endl;
+    oss << "Service Name: " << service_name << std::endl;
+    oss << "Register Self: " << (register_self ? "Yes" : "No") << std::endl;
+    oss << "Weight: " << weight << std::endl;
+    oss << "Region: " << (region.empty() ? "(not set)" : region) << std::endl;
+    oss << "Zone: " << (zone.empty() ? "(not set)" : zone) << std::endl;
+    oss << "Version: " << version << std::endl;
+    return oss.str();
+}
+
 // ============ SecurityConfig::ToString ============
 std::string SecurityConfig::ToString() const {
     std::ostringstream oss;
@@ -447,6 +542,7 @@ std::string Config::ToString() const {
     oss << server.ToString() << std::endl;
     oss << mysql.ToString() << std::endl;
     oss << redis.ToString() << std::endl;
+    oss << zookeeper.ToString() << std::endl;
     oss << security.ToString() << std::endl;
     oss << sms.ToString() << std::endl;
     oss << login.ToString() << std::endl;

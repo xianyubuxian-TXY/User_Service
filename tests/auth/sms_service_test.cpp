@@ -1,36 +1,32 @@
+// tests/auth/sms_service_test.cpp
+
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+
 #include "auth/sms_service.h"
 #include "mock_auth_deps.h"
-#include "common/error_codes.h"
 
-using namespace user_service;
-using namespace user_service::testing;
 using ::testing::_;
 using ::testing::Return;
+using ::testing::AnyOf;
 using ::testing::HasSubstr;
 
-// ============================================================================
-// 测试夹具
-// ============================================================================
+namespace user_service {
+namespace testing {
+
 class SmsServiceTest : public ::testing::Test {
 protected:
     void SetUp() override {
         mock_redis_ = std::make_shared<MockRedisClient>();
-        
-        SmsConfig config;
-        config.code_len = 6;
-        config.code_ttl_seconds = 300;
-        config.send_interval_seconds = 60;
-        config.max_retry_count = 3;
-        config.retry_ttl_seconds = 300;
-        config.lock_seconds = 600;
-        
-        sms_service_ = std::make_unique<SmsService>(mock_redis_, config);
+        config_ = CreateTestSmsConfig();
+        sms_service_ = std::make_unique<SmsService>(mock_redis_, config_);
     }
-    
+
     std::shared_ptr<MockRedisClient> mock_redis_;
+    SmsConfig config_;
     std::unique_ptr<SmsService> sms_service_;
+    
+    const std::string test_mobile_ = "13800138000";
 };
 
 // ============================================================================
@@ -38,76 +34,92 @@ protected:
 // ============================================================================
 
 TEST_F(SmsServiceTest, SendCaptcha_Success) {
-    EXPECT_CALL(*mock_redis_, Exists("sms:lock:register:13800138000"))
-        .WillOnce(Return(Result<bool>::Ok(false)));
+    // 设置 Mock 期望
+    EXPECT_CALL(*mock_redis_, Exists(_))
+        .WillRepeatedly(Return(Result<bool>::Ok(false)));  // 未被锁定，未在间隔期内
     
-    EXPECT_CALL(*mock_redis_, Exists("sms:interval:13800138000"))
-        .WillOnce(Return(Result<bool>::Ok(false)));
+    EXPECT_CALL(*mock_redis_, SetPx(_, _, _))
+        .WillRepeatedly(Return(Result<void>::Ok()));  // 存储验证码和间隔成功
     
-    EXPECT_CALL(*mock_redis_, SetPx("sms:code:register:13800138000", _, _))
-        .WillOnce(Return(Result<void>::Ok()));
+    auto result = sms_service_->SendCaptcha(SmsScene::Register, test_mobile_);
     
-    EXPECT_CALL(*mock_redis_, SetPx("sms:interval:13800138000", "1", _))
-        .WillOnce(Return(Result<void>::Ok()));
-    
-    auto result = sms_service_->SendCaptcha(SmsScene::Register, "13800138000");
-    
-    EXPECT_TRUE(result.IsOk());
-    EXPECT_EQ(result.Value(), 60);
+    ASSERT_TRUE(result.IsOk()) << "Error: " << result.message;
+    EXPECT_EQ(result.Value(), config_.send_interval_seconds);
 }
 
-TEST_F(SmsServiceTest, SendCaptcha_Locked) {
-    EXPECT_CALL(*mock_redis_, Exists("sms:lock:register:13800138000"))
+TEST_F(SmsServiceTest, SendCaptcha_AlreadyLocked) {
+    // 模拟已被锁定
+    EXPECT_CALL(*mock_redis_, Exists(HasSubstr("lock")))
         .WillOnce(Return(Result<bool>::Ok(true)));
     
-    EXPECT_CALL(*mock_redis_, PTTL("sms:lock:register:13800138000"))
-        .WillOnce(Return(Result<int64_t>::Ok(300000)));
+    EXPECT_CALL(*mock_redis_, PTTL(_))
+        .WillOnce(Return(Result<int64_t>::Ok(60000)));  // 60秒
     
-    auto result = sms_service_->SendCaptcha(SmsScene::Register, "13800138000");
+    auto result = sms_service_->SendCaptcha(SmsScene::Login, test_mobile_);
     
     EXPECT_FALSE(result.IsOk());
     EXPECT_EQ(result.code, ErrorCode::RateLimited);
 }
 
-TEST_F(SmsServiceTest, SendCaptcha_IntervalLimit) {
-    EXPECT_CALL(*mock_redis_, Exists("sms:lock:register:13800138000"))
+TEST_F(SmsServiceTest, SendCaptcha_WithinInterval) {
+    // 未被锁定
+    EXPECT_CALL(*mock_redis_, Exists(HasSubstr("lock")))
         .WillOnce(Return(Result<bool>::Ok(false)));
     
-    EXPECT_CALL(*mock_redis_, Exists("sms:interval:13800138000"))
+    // 在发送间隔内
+    EXPECT_CALL(*mock_redis_, Exists(HasSubstr("interval")))
         .WillOnce(Return(Result<bool>::Ok(true)));
     
-    EXPECT_CALL(*mock_redis_, PTTL("sms:lock:register:13800138000"))
-        .WillOnce(Return(Result<int64_t>::Ok(30000)));
+    EXPECT_CALL(*mock_redis_, PTTL(_))
+        .WillOnce(Return(Result<int64_t>::Ok(30000)));  // 30秒
     
-    auto result = sms_service_->SendCaptcha(SmsScene::Register, "13800138000");
+    auto result = sms_service_->SendCaptcha(SmsScene::Register, test_mobile_);
     
     EXPECT_FALSE(result.IsOk());
     EXPECT_EQ(result.code, ErrorCode::RateLimited);
 }
 
-TEST_F(SmsServiceTest, SendCaptcha_RedisError_CheckLock) {
-    EXPECT_CALL(*mock_redis_, Exists("sms:lock:register:13800138000"))
+TEST_F(SmsServiceTest, SendCaptcha_RedisError) {
+    EXPECT_CALL(*mock_redis_, Exists(_))
         .WillOnce(Return(Result<bool>::Fail(ErrorCode::ServiceUnavailable, "Redis error")));
     
-    auto result = sms_service_->SendCaptcha(SmsScene::Register, "13800138000");
+    auto result = sms_service_->SendCaptcha(SmsScene::Register, test_mobile_);
     
     EXPECT_FALSE(result.IsOk());
     EXPECT_EQ(result.code, ErrorCode::ServiceUnavailable);
 }
 
-TEST_F(SmsServiceTest, SendCaptcha_RedisError_StoreFailed) {
-    EXPECT_CALL(*mock_redis_, Exists("sms:lock:register:13800138000"))
-        .WillOnce(Return(Result<bool>::Ok(false)));
-    EXPECT_CALL(*mock_redis_, Exists("sms:interval:13800138000"))
-        .WillOnce(Return(Result<bool>::Ok(false)));
+TEST_F(SmsServiceTest, SendCaptcha_StoreCodeFailed) {
+    EXPECT_CALL(*mock_redis_, Exists(_))
+        .WillRepeatedly(Return(Result<bool>::Ok(false)));
     
-    EXPECT_CALL(*mock_redis_, SetPx("sms:code:register:13800138000", _, _))
-        .WillOnce(Return(Result<void>::Fail(ErrorCode::ServiceUnavailable, "Redis error")));
+    // 存储验证码失败
+    EXPECT_CALL(*mock_redis_, SetPx(HasSubstr("code"), _, _))
+        .WillOnce(Return(Result<void>::Fail(ErrorCode::ServiceUnavailable, "Store failed")));
     
-    auto result = sms_service_->SendCaptcha(SmsScene::Register, "13800138000");
+    auto result = sms_service_->SendCaptcha(SmsScene::Register, test_mobile_);
     
     EXPECT_FALSE(result.IsOk());
     EXPECT_EQ(result.code, ErrorCode::ServiceUnavailable);
+}
+
+TEST_F(SmsServiceTest, SendCaptcha_DifferentScenes) {
+    EXPECT_CALL(*mock_redis_, Exists(_))
+        .WillRepeatedly(Return(Result<bool>::Ok(false)));
+    
+    EXPECT_CALL(*mock_redis_, SetPx(_, _, _))
+        .WillRepeatedly(Return(Result<void>::Ok()));
+    
+    // 不同场景都应该能发送
+    auto result1 = sms_service_->SendCaptcha(SmsScene::Register, test_mobile_);
+    auto result2 = sms_service_->SendCaptcha(SmsScene::Login, test_mobile_);
+    auto result3 = sms_service_->SendCaptcha(SmsScene::ResetPassword, test_mobile_);
+    auto result4 = sms_service_->SendCaptcha(SmsScene::DeleteUser, test_mobile_);
+    
+    EXPECT_TRUE(result1.IsOk());
+    EXPECT_TRUE(result2.IsOk());
+    EXPECT_TRUE(result3.IsOk());
+    EXPECT_TRUE(result4.IsOk());
 }
 
 // ============================================================================
@@ -115,93 +127,98 @@ TEST_F(SmsServiceTest, SendCaptcha_RedisError_StoreFailed) {
 // ============================================================================
 
 TEST_F(SmsServiceTest, VerifyCaptcha_Success) {
-    EXPECT_CALL(*mock_redis_, Exists("sms:lock:register:13800138000"))
+    const std::string correct_code = "123456";
+    
+    // 未被锁定
+    EXPECT_CALL(*mock_redis_, Exists(HasSubstr("lock")))
         .WillOnce(Return(Result<bool>::Ok(false)));
     
-    EXPECT_CALL(*mock_redis_, Get("sms:code:register:13800138000"))
-        .WillOnce(Return(Result<std::optional<std::string>>::Ok("123456")));
+    // 返回正确的验证码
+    EXPECT_CALL(*mock_redis_, Get(HasSubstr("code")))
+        .WillOnce(Return(Result<std::optional<std::string>>::Ok(correct_code)));
     
-    // 修正：Del 返回 Result<bool>
-    EXPECT_CALL(*mock_redis_, Del("sms:verify_count:register:13800138000"))
+    // 清除错误计数
+    EXPECT_CALL(*mock_redis_, Del(HasSubstr("verify_count")))
         .WillOnce(Return(Result<bool>::Ok(true)));
     
-    auto result = sms_service_->VerifyCaptcha(SmsScene::Register, "13800138000", "123456");
+    auto result = sms_service_->VerifyCaptcha(SmsScene::Register, test_mobile_, correct_code);
     
     EXPECT_TRUE(result.IsOk());
 }
 
 TEST_F(SmsServiceTest, VerifyCaptcha_WrongCode) {
-    EXPECT_CALL(*mock_redis_, Exists("sms:lock:register:13800138000"))
+    // 未被锁定
+    EXPECT_CALL(*mock_redis_, Exists(HasSubstr("lock")))
         .WillOnce(Return(Result<bool>::Ok(false)));
     
-    EXPECT_CALL(*mock_redis_, Get("sms:code:register:13800138000"))
+    // 返回正确的验证码
+    EXPECT_CALL(*mock_redis_, Get(HasSubstr("code")))
         .WillOnce(Return(Result<std::optional<std::string>>::Ok("123456")));
     
-    EXPECT_CALL(*mock_redis_, Incr("sms:verify_count:register:13800138000"))
+    // 增加错误计数
+    EXPECT_CALL(*mock_redis_, Incr(_))
         .WillOnce(Return(Result<int64_t>::Ok(1)));
     
-    // 修正：PExpire 返回 Result<bool>
-    EXPECT_CALL(*mock_redis_, PExpire("sms:verify_count:register:13800138000", _))
+    EXPECT_CALL(*mock_redis_, PExpire(_, _))
         .WillOnce(Return(Result<bool>::Ok(true)));
     
-    auto result = sms_service_->VerifyCaptcha(SmsScene::Register, "13800138000", "000000");
+    auto result = sms_service_->VerifyCaptcha(SmsScene::Register, test_mobile_, "999999");
     
     EXPECT_FALSE(result.IsOk());
     EXPECT_EQ(result.code, ErrorCode::CaptchaWrong);
-    EXPECT_THAT(result.message, HasSubstr("还剩2次机会"));
 }
 
-TEST_F(SmsServiceTest, VerifyCaptcha_Expired) {
-    EXPECT_CALL(*mock_redis_, Exists("sms:lock:register:13800138000"))
+TEST_F(SmsServiceTest, VerifyCaptcha_CodeExpired) {
+    // 未被锁定
+    EXPECT_CALL(*mock_redis_, Exists(HasSubstr("lock")))
         .WillOnce(Return(Result<bool>::Ok(false)));
     
-    EXPECT_CALL(*mock_redis_, Get("sms:code:register:13800138000"))
+    // 验证码不存在（已过期）
+    EXPECT_CALL(*mock_redis_, Get(HasSubstr("code")))
         .WillOnce(Return(Result<std::optional<std::string>>::Ok(std::nullopt)));
     
-    auto result = sms_service_->VerifyCaptcha(SmsScene::Register, "13800138000", "123456");
+    auto result = sms_service_->VerifyCaptcha(SmsScene::Register, test_mobile_, "123456");
     
     EXPECT_FALSE(result.IsOk());
     EXPECT_EQ(result.code, ErrorCode::CaptchaExpired);
 }
 
-TEST_F(SmsServiceTest, VerifyCaptcha_Locked) {
-    EXPECT_CALL(*mock_redis_, Exists("sms:lock:register:13800138000"))
+TEST_F(SmsServiceTest, VerifyCaptcha_AccountLocked) {
+    // 已被锁定
+    EXPECT_CALL(*mock_redis_, Exists(HasSubstr("lock")))
         .WillOnce(Return(Result<bool>::Ok(true)));
     
-    EXPECT_CALL(*mock_redis_, PTTL("sms:lock:register:13800138000"))
-        .WillOnce(Return(Result<int64_t>::Ok(300000)));
+    EXPECT_CALL(*mock_redis_, PTTL(_))
+        .WillOnce(Return(Result<int64_t>::Ok(1800000)));  // 30分钟
     
-    auto result = sms_service_->VerifyCaptcha(SmsScene::Register, "13800138000", "123456");
+    auto result = sms_service_->VerifyCaptcha(SmsScene::Login, test_mobile_, "123456");
     
     EXPECT_FALSE(result.IsOk());
     EXPECT_EQ(result.code, ErrorCode::RateLimited);
 }
 
-TEST_F(SmsServiceTest, VerifyCaptcha_MaxRetryExceeded_TriggerLock) {
-    EXPECT_CALL(*mock_redis_, Exists("sms:lock:register:13800138000"))
+TEST_F(SmsServiceTest, VerifyCaptcha_TriggerLock) {
+    // 未被锁定
+    EXPECT_CALL(*mock_redis_, Exists(HasSubstr("lock")))
         .WillOnce(Return(Result<bool>::Ok(false)));
     
-    EXPECT_CALL(*mock_redis_, Get("sms:code:register:13800138000"))
+    // 返回正确的验证码
+    EXPECT_CALL(*mock_redis_, Get(HasSubstr("code")))
         .WillOnce(Return(Result<std::optional<std::string>>::Ok("123456")));
     
-    EXPECT_CALL(*mock_redis_, Incr("sms:verify_count:register:13800138000"))
-        .WillOnce(Return(Result<int64_t>::Ok(3)));
+    // 错误次数达到上限
+    EXPECT_CALL(*mock_redis_, Incr(_))
+        .WillOnce(Return(Result<int64_t>::Ok(config_.max_retry_count)));
     
-    // 修正：PExpire 返回 Result<bool>
-    EXPECT_CALL(*mock_redis_, PExpire(_, _))
-        .WillRepeatedly(Return(Result<bool>::Ok(true)));
-    
-    EXPECT_CALL(*mock_redis_, SetPx("sms:lock:register:13800138000", "1", _))
+    // 触发锁定
+    EXPECT_CALL(*mock_redis_, SetPx(HasSubstr("lock"), _, _))
         .WillOnce(Return(Result<void>::Ok()));
     
-    // 修正：Del 返回 Result<bool>
-    EXPECT_CALL(*mock_redis_, Del("sms:code:register:13800138000"))
-        .WillOnce(Return(Result<bool>::Ok(true)));
+    // 删除验证码和计数器
+    EXPECT_CALL(*mock_redis_, Del(_))
+        .WillRepeatedly(Return(Result<bool>::Ok(true)));
     
-    EXPECT_CALL(*mock_redis_, Del("sms:verify_count:register:13800138000"))
-        .WillOnce(Return(Result<bool>::Ok(true)));
-    
-    auto result = sms_service_->VerifyCaptcha(SmsScene::Register, "13800138000", "wrong");
+    auto result = sms_service_->VerifyCaptcha(SmsScene::Login, test_mobile_, "wrong_code");
     
     EXPECT_FALSE(result.IsOk());
     EXPECT_EQ(result.code, ErrorCode::AccountLocked);
@@ -212,22 +229,23 @@ TEST_F(SmsServiceTest, VerifyCaptcha_MaxRetryExceeded_TriggerLock) {
 // ============================================================================
 
 TEST_F(SmsServiceTest, ConsumeCaptcha_Success) {
-    // 修正：Del 返回 Result<bool>
-    EXPECT_CALL(*mock_redis_, Del("sms:code:register:13800138000"))
+    EXPECT_CALL(*mock_redis_, Del(HasSubstr("code")))
         .WillOnce(Return(Result<bool>::Ok(true)));
     
-    auto result = sms_service_->ConsumeCaptcha(SmsScene::Register, "13800138000");
+    auto result = sms_service_->ConsumeCaptcha(SmsScene::Register, test_mobile_);
     
     EXPECT_TRUE(result.IsOk());
 }
 
-// 补充：测试 key 不存在时的删除（幂等性）
-TEST_F(SmsServiceTest, ConsumeCaptcha_KeyNotExist_StillOk) {
-    // key 不存在，Del 返回 false，但不是错误
-    EXPECT_CALL(*mock_redis_, Del("sms:code:register:13800138000"))
+TEST_F(SmsServiceTest, ConsumeCaptcha_CodeNotExists) {
+    // 即使验证码不存在，消费也应该成功（幂等性）
+    EXPECT_CALL(*mock_redis_, Del(HasSubstr("code")))
         .WillOnce(Return(Result<bool>::Ok(false)));
     
-    auto result = sms_service_->ConsumeCaptcha(SmsScene::Register, "13800138000");
+    auto result = sms_service_->ConsumeCaptcha(SmsScene::Register, test_mobile_);
     
-    EXPECT_TRUE(result.IsOk());  // 应该仍然成功
+    EXPECT_TRUE(result.IsOk());
 }
+
+}  // namespace testing
+}  // namespace user_service

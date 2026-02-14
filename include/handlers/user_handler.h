@@ -4,7 +4,7 @@
 #include "pb_user/user.grpc.pb.h"
 #include "service/user_service.h"
 #include "auth/jwt_service.h"  // 新增
-#include <jwt_authenticator.h>
+#include "auth/jwt_authenticator.h"
 
 namespace user_service {
 

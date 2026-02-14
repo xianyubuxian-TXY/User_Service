@@ -14,16 +14,16 @@ public:
     SmsService(std::shared_ptr<RedisClient> redis, const SmsConfig& config);
 
     // 发送验证码
-    Result<int32_t> SendCaptcha(SmsScene scene,
+    virtual Result<int32_t> SendCaptcha(SmsScene scene,
                                         const std::string& mobile);
 
     // 验证验证码
-    Result<void> VerifyCaptcha(SmsScene scene,
+    virtual Result<void> VerifyCaptcha(SmsScene scene,
                             const std::string& mobile,
                             const std::string& code);
 
     // 消费验证码（验证成功后删除，防止重复使用）
-    Result<void> ConsumeCaptcha(SmsScene scene, const std::string& mobile);
+    virtual Result<void> ConsumeCaptcha(SmsScene scene, const std::string& mobile);
 private:
     // 场景名称
     static std::string SceneName(SmsScene scene);

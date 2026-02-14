@@ -1,7 +1,15 @@
-# proto/CMakeLists.txt
+# api/proto/CMakeLists.txt
 cmake_minimum_required(VERSION 3.16)
 
+find_program(PROTOC protoc REQUIRED)
 find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin REQUIRED)
+
+# 使用 find_package 查找 Protobuf（更完整）
+find_package(Protobuf REQUIRED)
+
+# 使用 pkg-config 查找 gRPC
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GRPC REQUIRED grpc++ grpc)
 
 set(PROTO_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/pb_common/result.proto
@@ -31,7 +39,7 @@ foreach(PROTO_FILE ${PROTO_FILES})
     
     add_custom_command(
         OUTPUT ${PROTO_CC} ${PROTO_H} ${GRPC_CC} ${GRPC_H}
-        COMMAND protobuf::protoc
+        COMMAND ${PROTOC}
             --cpp_out=${PROTO_OUTPUT_DIR}
             --grpc_out=${PROTO_OUTPUT_DIR}
             --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN}
@@ -42,7 +50,6 @@ foreach(PROTO_FILE ${PROTO_FILES})
         VERBATIM
     )
     
-    # 标记为生成文件
     set_source_files_properties(
         ${PROTO_CC} ${PROTO_H} ${GRPC_CC} ${GRPC_H}
         PROPERTIES GENERATED TRUE
@@ -58,16 +65,25 @@ add_library(proto_lib STATIC
 target_include_directories(proto_lib 
     PUBLIC 
         ${PROTO_OUTPUT_DIR}
+        ${Protobuf_INCLUDE_DIRS}
+        ${GRPC_INCLUDE_DIRS}
 )
 
+# 关键：正确链接所有 protobuf 库
 target_link_libraries(proto_lib 
     PUBLIC 
-        protobuf::libprotobuf 
-        gRPC::grpc++
+        ${Protobuf_LIBRARIES}
+        ${GRPC_LIBRARIES}
+)
+
+# 添加链接目录（pkg-config 可能需要）
+target_link_directories(proto_lib
+    PUBLIC
+        ${GRPC_LIBRARY_DIRS}
 )
 
 target_compile_features(proto_lib PUBLIC cxx_std_17)
 
 target_compile_options(proto_lib PRIVATE
-    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wno-unused-parameter>
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wno-unused-parameter -Wno-deprecated-declarations>
 )

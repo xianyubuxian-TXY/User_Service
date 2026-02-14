@@ -3,8 +3,8 @@ project(UserService
         VERSION 1.0.0
         LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 23)	# 指定使用 C++17 标准
-set(CMAKE_CXX_STANDARD_REQUIRED ON) #强制要求编译器支持 C++17，若编译器不支持，直接报错
+set(CMAKE_CXX_STANDARD 23)	# 指定使用 C++23 标准
+set(CMAKE_CXX_STANDARD_REQUIRED ON) #强制要求编译器支持 C++23，若编译器不支持，直接报错
 set(CMAKE_CXX_EXTENSIONS OFF) #禁用编译器扩展语法， 保证代码在不同编译器下行为一致
 
 # 核心逻辑：若用户未指定 CMAKE_BUILD_TYPE（如编译时未加 -DCMAKE_BUILD_TYPE=Debug），
@@ -43,10 +43,15 @@ find_library(HIREDIS_LIB hiredis)
 find_path(REDIS_PLUS_PLUS_HEADER sw)
 find_library(REDIS_PLUS_PLUS_LIB redis++)
 
-# gRPC
+# Protobuf
 find_package(Protobuf REQUIRED)
-find_package(gRPC CONFIG REQUIRED)
-find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin)
+
+# gRPC
+pkg_check_modules(GRPC REQUIRED grpc++ grpc)
+
+# 查找 protoc 和 grpc_cpp_plugin
+find_program(PROTOC protoc REQUIRED)
+find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin REQUIRED)
 
 # 查找 OpenSSL（jwt_service 需要）
 find_package(OpenSSL REQUIRED)
@@ -54,14 +59,23 @@ find_package(OpenSSL REQUIRED)
 # 查找 fmt
 find_package(fmt REQUIRED)
 
+# Zookeeper 依赖
+find_path(ZOOKEEPER_INCLUDE_DIR zookeeper/zookeeper.h)
+find_library(ZOOKEEPER_LIBRARY zookeeper_mt)
+
+if(NOT ZOOKEEPER_INCLUDE_DIR OR NOT ZOOKEEPER_LIBRARY)
+    message(FATAL_ERROR "ZooKeeper not found. Install libzookeeper-mt-dev")
+endif()
+
+message(STATUS "Found ZooKeeper: ${ZOOKEEPER_LIBRARY}")
+
 add_subdirectory(api)
 add_subdirectory(src)
 
 
 # GTest 包
-find_package(GTest REQUIRED)
 if(BUILD_TESTS)
+    find_package(GTest REQUIRED)
     enable_testing()
-    find_package(GTest CONFIG REQUIRED)
     add_subdirectory(tests)
 endif()

@@ -1,0 +1,78 @@
+# tests/server/test_config.yaml
+
+server:
+  host: "127.0.0.1"
+  grpc_port: 50099
+  metrics_port: 9099
+
+mysql:
+  host: "localhost"
+  port: 3306
+  database: "test_db"
+  username: "test_user"
+  password: "test_pass"
+  pool_size: 2
+  connection_timeout_ms: 1000
+  auto_reconnect: true
+  charset: "utf8mb4"
+
+redis:
+  host: "localhost"
+  port: 6379
+  password: ""
+  db: 15
+  pool_size: 2
+  wait_timeout_ms: 100
+
+zookeeper:
+  hosts: "localhost:2181"
+  session_timeout_ms: 5000
+  connect_timeout_ms: 3000
+  root_path: "/test-services"
+  service_name: "test-service"
+  enabled: false
+  register_self: false
+  weight: 100
+
+security:
+  jwt_secret: "test-secret-key-for-unit-testing-only"
+  jwt_issuer: "test-service"
+  access_token_ttl_seconds: 300
+  refresh_token_ttl_seconds: 3600
+
+sms:
+  code_len: 6
+  code_ttl_seconds: 60
+  send_interval_seconds: 10
+  max_retry_count: 3
+  retry_ttl_seconds: 60
+  lock_seconds: 300
+
+login:
+  max_failed_attempts: 3
+  failed_attempts_window: 300
+  lock_duration_seconds: 600
+  max_sessions_per_user: 3
+  kick_oldest_session: true
+  enable_password_login: true
+  enable_sms_login: true
+  require_captcha: false
+  captcha_after_failed_attempts: 2
+
+password:
+  min_length: 6
+  max_length: 20
+  require_uppercase: false
+  require_lowercase: false
+  require_digit: true
+  require_special_char: false
+  expire_days: 0
+  history_count: 0
+
+log:
+  level: "debug"
+  path: "./test_logs"
+  filename: "test-server.log"
+  max_size: 1048576
+  max_files: 2
+  console_output: false

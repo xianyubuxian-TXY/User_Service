@@ -5,6 +5,7 @@
 #include <mysql/mysql.h>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace user_service {
 

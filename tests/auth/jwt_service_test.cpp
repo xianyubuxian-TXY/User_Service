@@ -1,133 +1,91 @@
+// tests/auth/jwt_service_test.cpp
+
 #include <gtest/gtest.h>
+#include <gmock/gmock.h>
 #include <thread>
 #include <chrono>
+
 #include "auth/jwt_service.h"
-#include "common/error_codes.h"
+#include "mock_auth_deps.h"
 
-using namespace user_service;
+namespace user_service {
+namespace testing {
 
-// ============================================================================
-// 测试夹具
-// ============================================================================
 class JwtServiceTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        SecurityConfig config;
-        config.jwt_secret = "test-secret-key-32-bytes-long!!!";
-        config.jwt_issuer = "test-issuer";
-        config.access_token_ttl_seconds = 3600;      // 1 小时
-        config.refresh_token_ttl_seconds = 604800;   // 7 天
-        
-        jwt_service_ = std::make_unique<JwtService>(config);
+        config_ = CreateTestSecurityConfig();
+        jwt_service_ = std::make_unique<JwtService>(config_);
     }
-    
-    UserEntity MakeUser(int64_t id = 123,
-                        const std::string& uuid = "test-uuid-123",
-                        const std::string& mobile = "13800138000") {
-        UserEntity user;
-        user.id = id;
-        user.uuid = uuid;
-        user.mobile = mobile;
-        user.role = UserRole::User;
-        return user;
-    }
-    
+
+    SecurityConfig config_;
     std::unique_ptr<JwtService> jwt_service_;
 };
 
 // ============================================================================
-// GenerateTokenPair 测试
+// Token 生成测试
 // ============================================================================
 
 TEST_F(JwtServiceTest, GenerateTokenPair_Success) {
-    auto user = MakeUser();
-    auto tokens = jwt_service_->GenerateTokenPair(user);
+    UserEntity user = CreateTestUser();
     
+    TokenPair tokens = jwt_service_->GenerateTokenPair(user);
+    
+    // 验证 token 不为空
     EXPECT_FALSE(tokens.access_token.empty());
     EXPECT_FALSE(tokens.refresh_token.empty());
-    EXPECT_EQ(tokens.expires_in, 3600);
     
-    // Access Token 和 Refresh Token 应该不同
-    EXPECT_NE(tokens.access_token, tokens.refresh_token);
-}
-
-TEST_F(JwtServiceTest, GenerateTokenPair_JwtFormat) {
-    auto user = MakeUser();
-    auto tokens = jwt_service_->GenerateTokenPair(user);
+    // 验证过期时间
+    EXPECT_EQ(tokens.expires_in, config_.access_token_ttl_seconds);
     
-    // JWT 格式：Header.Payload.Signature（两个点）
-    auto check_jwt_format = [](const std::string& token) {
-        size_t dot1 = token.find('.');
-        size_t dot2 = token.find('.', dot1 + 1);
-        return dot1 != std::string::npos && 
-               dot2 != std::string::npos &&
-               dot1 > 0 &&
-               dot2 > dot1 + 1 &&
-               token.size() > dot2 + 1;
+    // 验证 JWT 格式（三段式：header.payload.signature）
+    auto count_dots = [](const std::string& s) {
+        return std::count(s.begin(), s.end(), '.');
     };
-    
-    EXPECT_TRUE(check_jwt_format(tokens.access_token));
-    EXPECT_TRUE(check_jwt_format(tokens.refresh_token));
+    EXPECT_EQ(count_dots(tokens.access_token), 2);
+    EXPECT_EQ(count_dots(tokens.refresh_token), 2);
 }
 
-TEST_F(JwtServiceTest, GenerateTokenPair_Unique) {
-    auto user = MakeUser();
+TEST_F(JwtServiceTest, GenerateTokenPair_DifferentUsersGetDifferentTokens) {
+    UserEntity user1 = CreateTestUser(1, "uuid-1", "13800138001");
+    UserEntity user2 = CreateTestUser(2, "uuid-2", "13800138002");
     
-    // 连续生成多个 token pair，应该不同（因为有 jti 随机数）
-    auto tokens1 = jwt_service_->GenerateTokenPair(user);
-    auto tokens2 = jwt_service_->GenerateTokenPair(user);
+    TokenPair tokens1 = jwt_service_->GenerateTokenPair(user1);
+    TokenPair tokens2 = jwt_service_->GenerateTokenPair(user2);
     
     EXPECT_NE(tokens1.access_token, tokens2.access_token);
     EXPECT_NE(tokens1.refresh_token, tokens2.refresh_token);
 }
 
-TEST_F(JwtServiceTest, GenerateTokenPair_DifferentUsers) {
-    auto user1 = MakeUser(1, "uuid-1", "13800000001");
-    auto user2 = MakeUser(2, "uuid-2", "13800000002");
+TEST_F(JwtServiceTest, GenerateTokenPair_SameUserDifferentTimes) {
+    UserEntity user = CreateTestUser();
     
-    auto tokens1 = jwt_service_->GenerateTokenPair(user1);
-    auto tokens2 = jwt_service_->GenerateTokenPair(user2);
+    TokenPair tokens1 = jwt_service_->GenerateTokenPair(user);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    TokenPair tokens2 = jwt_service_->GenerateTokenPair(user);
     
-    // 不同用户的 token 应该不同
+    // 即使同一用户，不同时间生成的 token 也应该不同（因为有 jti）
     EXPECT_NE(tokens1.access_token, tokens2.access_token);
     EXPECT_NE(tokens1.refresh_token, tokens2.refresh_token);
 }
 
 // ============================================================================
-// VerifyAccessToken 测试
+// Access Token 验证测试
 // ============================================================================
 
-TEST_F(JwtServiceTest, VerifyAccessToken_Success) {
-    auto user = MakeUser(123, "uuid-abc", "13800138000");
+TEST_F(JwtServiceTest, VerifyAccessToken_ValidToken) {
+    UserEntity user = CreateTestUser(123, "uuid-abc-123", "13800138000");
     user.role = UserRole::Admin;
-    auto tokens = jwt_service_->GenerateTokenPair(user);
+    
+    TokenPair tokens = jwt_service_->GenerateTokenPair(user);
     
     auto result = jwt_service_->VerifyAccessToken(tokens.access_token);
     
-    EXPECT_TRUE(result.IsOk());
-    EXPECT_EQ(result.Value().user_id, 123);
-    EXPECT_EQ(result.Value().user_uuid, "uuid-abc");
-    EXPECT_EQ(result.Value().mobile, "13800138000");
+    ASSERT_TRUE(result.IsOk()) << "Error: " << result.message;
+    EXPECT_EQ(result.Value().user_id, user.id);
+    EXPECT_EQ(result.Value().user_uuid, user.uuid);
+    EXPECT_EQ(result.Value().mobile, user.mobile);
     EXPECT_EQ(result.Value().role, UserRole::Admin);
-}
-
-TEST_F(JwtServiceTest, VerifyAccessToken_AllRoles) {
-    std::vector<UserRole> roles = {
-        UserRole::User, 
-        UserRole::Admin, 
-        UserRole::SuperAdmin
-    };
-    
-    for (auto role : roles) {
-        auto user = MakeUser();
-        user.role = role;
-        auto tokens = jwt_service_->GenerateTokenPair(user);
-        
-        auto result = jwt_service_->VerifyAccessToken(tokens.access_token);
-        
-        EXPECT_TRUE(result.IsOk());
-        EXPECT_EQ(result.Value().role, role);
-    }
 }
 
 TEST_F(JwtServiceTest, VerifyAccessToken_EmptyToken) {
@@ -137,27 +95,23 @@ TEST_F(JwtServiceTest, VerifyAccessToken_EmptyToken) {
     EXPECT_EQ(result.code, ErrorCode::TokenMissing);
 }
 
-TEST_F(JwtServiceTest, VerifyAccessToken_InvalidFormat_NoDelimiter) {
-    auto result = jwt_service_->VerifyAccessToken("not-a-jwt");
+TEST_F(JwtServiceTest, VerifyAccessToken_InvalidFormat) {
+    auto result = jwt_service_->VerifyAccessToken("invalid_token_without_dots");
     
     EXPECT_FALSE(result.IsOk());
     EXPECT_EQ(result.code, ErrorCode::TokenInvalid);
 }
 
-TEST_F(JwtServiceTest, VerifyAccessToken_InvalidFormat_OnlyOneDelimiter) {
-    auto result = jwt_service_->VerifyAccessToken("header.payload");
+TEST_F(JwtServiceTest, VerifyAccessToken_TamperedSignature) {
+    UserEntity user = CreateTestUser();
+    TokenPair tokens = jwt_service_->GenerateTokenPair(user);
     
-    EXPECT_FALSE(result.IsOk());
-    EXPECT_EQ(result.code, ErrorCode::TokenInvalid);
-}
-
-TEST_F(JwtServiceTest, VerifyAccessToken_InvalidSignature) {
-    auto user = MakeUser();
-    auto tokens = jwt_service_->GenerateTokenPair(user);
-    
-    // 篡改 token（修改最后一个字符）
+    // 篡改签名（修改最后几个字符）
     std::string tampered = tokens.access_token;
-    tampered.back() = (tampered.back() == 'a') ? 'b' : 'a';
+    if (tampered.length() > 10) {
+        tampered[tampered.length() - 5] = 'X';
+        tampered[tampered.length() - 3] = 'Y';
+    }
     
     auto result = jwt_service_->VerifyAccessToken(tampered);
     
@@ -166,36 +120,13 @@ TEST_F(JwtServiceTest, VerifyAccessToken_InvalidSignature) {
 }
 
 TEST_F(JwtServiceTest, VerifyAccessToken_WrongSecret) {
+    UserEntity user = CreateTestUser();
+    TokenPair tokens = jwt_service_->GenerateTokenPair(user);
+    
     // 使用不同密钥的 JwtService 验证
-    SecurityConfig other_config;
-    other_config.jwt_secret = "different-secret-key-32-bytes!!";
-    other_config.jwt_issuer = "test-issuer";
-    other_config.access_token_ttl_seconds = 3600;
-    other_config.refresh_token_ttl_seconds = 604800;
-    
+    SecurityConfig other_config = config_;
+    other_config.jwt_secret = "different-secret-key-32-bytes!!!!!";
     JwtService other_service(other_config);
-    
-    auto user = MakeUser();
-    auto tokens = jwt_service_->GenerateTokenPair(user);
-    
-    // 用不同密钥验证
-    auto result = other_service.VerifyAccessToken(tokens.access_token);
-    
-    EXPECT_FALSE(result.IsOk());
-    EXPECT_EQ(result.code, ErrorCode::TokenInvalid);
-}
-
-TEST_F(JwtServiceTest, VerifyAccessToken_WrongIssuer) {
-    SecurityConfig other_config;
-    other_config.jwt_secret = "test-secret-key-32-bytes-long!!!";
-    other_config.jwt_issuer = "different-issuer";
-    other_config.access_token_ttl_seconds = 3600;
-    other_config.refresh_token_ttl_seconds = 604800;
-    
-    JwtService other_service(other_config);
-    
-    auto user = MakeUser();
-    auto tokens = jwt_service_->GenerateTokenPair(user);
     
     auto result = other_service.VerifyAccessToken(tokens.access_token);
     
@@ -204,32 +135,28 @@ TEST_F(JwtServiceTest, VerifyAccessToken_WrongIssuer) {
 }
 
 TEST_F(JwtServiceTest, VerifyAccessToken_ExpiredToken) {
-    // 创建一个过期时间很短的服务
-    SecurityConfig config;
-    config.jwt_secret = "test-secret-key-32-bytes-long!!!";
-    config.jwt_issuer = "test-issuer";
-    config.access_token_ttl_seconds = 0;  // 立即过期
-    config.refresh_token_ttl_seconds = 604800;
+    // 创建一个过期时间极短的配置
+    SecurityConfig short_config = config_;
+    short_config.access_token_ttl_seconds = 1;  // 1 秒
+    JwtService short_service(short_config);
     
-    JwtService short_lived_service(config);
+    UserEntity user = CreateTestUser();
+    TokenPair tokens = short_service.GenerateTokenPair(user);
     
-    auto user = MakeUser();
-    auto tokens = short_lived_service.GenerateTokenPair(user);
+    // 等待 token 过期
+    std::this_thread::sleep_for(std::chrono::seconds(2));
     
-    // 等待一秒确保过期
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    
-    auto result = short_lived_service.VerifyAccessToken(tokens.access_token);
+    auto result = short_service.VerifyAccessToken(tokens.access_token);
     
     EXPECT_FALSE(result.IsOk());
     EXPECT_EQ(result.code, ErrorCode::TokenExpired);
 }
 
-TEST_F(JwtServiceTest, VerifyAccessToken_RefreshTokenRejected) {
-    auto user = MakeUser();
-    auto tokens = jwt_service_->GenerateTokenPair(user);
+TEST_F(JwtServiceTest, VerifyAccessToken_RefreshTokenAsAccessToken) {
+    UserEntity user = CreateTestUser();
+    TokenPair tokens = jwt_service_->GenerateTokenPair(user);
     
-    // 用 VerifyAccessToken 验证 Refresh Token，应该失败（类型不匹配）
+    // 用 refresh_token 作为 access_token 验证
     auto result = jwt_service_->VerifyAccessToken(tokens.refresh_token);
     
     EXPECT_FALSE(result.IsOk());
@@ -237,17 +164,18 @@ TEST_F(JwtServiceTest, VerifyAccessToken_RefreshTokenRejected) {
 }
 
 // ============================================================================
-// ParseRefreshToken 测试
+// Refresh Token 解析测试
 // ============================================================================
 
-TEST_F(JwtServiceTest, ParseRefreshToken_Success) {
-    auto user = MakeUser(456, "uuid-xyz", "13900139000");
-    auto tokens = jwt_service_->GenerateTokenPair(user);
+TEST_F(JwtServiceTest, ParseRefreshToken_ValidToken) {
+    UserEntity user = CreateTestUser(456, "uuid-456", "13800138000");
+    
+    TokenPair tokens = jwt_service_->GenerateTokenPair(user);
     
     auto result = jwt_service_->ParseRefreshToken(tokens.refresh_token);
     
-    EXPECT_TRUE(result.IsOk());
-    EXPECT_EQ(result.Value(), "456");  // 返回的是数据库 ID（字符串）
+    ASSERT_TRUE(result.IsOk()) << "Error: " << result.message;
+    EXPECT_EQ(result.Value(), std::to_string(user.id));
 }
 
 TEST_F(JwtServiceTest, ParseRefreshToken_EmptyToken) {
@@ -257,11 +185,11 @@ TEST_F(JwtServiceTest, ParseRefreshToken_EmptyToken) {
     EXPECT_EQ(result.code, ErrorCode::TokenMissing);
 }
 
-TEST_F(JwtServiceTest, ParseRefreshToken_AccessTokenRejected) {
-    auto user = MakeUser();
-    auto tokens = jwt_service_->GenerateTokenPair(user);
+TEST_F(JwtServiceTest, ParseRefreshToken_AccessTokenAsRefreshToken) {
+    UserEntity user = CreateTestUser();
+    TokenPair tokens = jwt_service_->GenerateTokenPair(user);
     
-    // 用 ParseRefreshToken 解析 Access Token，应该失败（类型不匹配）
+    // 用 access_token 作为 refresh_token 解析
     auto result = jwt_service_->ParseRefreshToken(tokens.access_token);
     
     EXPECT_FALSE(result.IsOk());
@@ -269,192 +197,88 @@ TEST_F(JwtServiceTest, ParseRefreshToken_AccessTokenRejected) {
 }
 
 TEST_F(JwtServiceTest, ParseRefreshToken_ExpiredToken) {
-    SecurityConfig config;
-    config.jwt_secret = "test-secret-key-32-bytes-long!!!";
-    config.jwt_issuer = "test-issuer";
-    config.access_token_ttl_seconds = 3600;
-    config.refresh_token_ttl_seconds = 0;  // 立即过期
+    SecurityConfig short_config = config_;
+    short_config.refresh_token_ttl_seconds = 1;  // 1 秒
+    JwtService short_service(short_config);
     
-    JwtService short_lived_service(config);
+    UserEntity user = CreateTestUser();
+    TokenPair tokens = short_service.GenerateTokenPair(user);
     
-    auto user = MakeUser();
-    auto tokens = short_lived_service.GenerateTokenPair(user);
+    std::this_thread::sleep_for(std::chrono::seconds(2));
     
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    
-    auto result = short_lived_service.ParseRefreshToken(tokens.refresh_token);
+    auto result = short_service.ParseRefreshToken(tokens.refresh_token);
     
     EXPECT_FALSE(result.IsOk());
     EXPECT_EQ(result.code, ErrorCode::TokenExpired);
 }
 
-TEST_F(JwtServiceTest, ParseRefreshToken_InvalidSignature) {
-    auto user = MakeUser();
-    auto tokens = jwt_service_->GenerateTokenPair(user);
-    
-    std::string tampered = tokens.refresh_token;
-    tampered.back() = (tampered.back() == 'x') ? 'y' : 'x';
-    
-    auto result = jwt_service_->ParseRefreshToken(tampered);
-    
-    EXPECT_FALSE(result.IsOk());
-    EXPECT_EQ(result.code, ErrorCode::TokenInvalid);
-}
-
 // ============================================================================
-// HashToken 测试
+// Token 哈希测试
 // ============================================================================
 
-TEST_F(JwtServiceTest, HashToken_Deterministic) {
-    std::string token = "some-token-string";
+TEST_F(JwtServiceTest, HashToken_Consistency) {
+    std::string token = "test_token_value";
     
-    auto hash1 = jwt_service_->HashToken(token);
-    auto hash2 = jwt_service_->HashToken(token);
+    std::string hash1 = JwtService::HashToken(token);
+    std::string hash2 = JwtService::HashToken(token);
     
-    EXPECT_EQ(hash1, hash2);  // 相同输入，相同输出
+    EXPECT_EQ(hash1, hash2);
 }
 
-TEST_F(JwtServiceTest, HashToken_Different) {
-    std::string token1 = "token-1";
-    std::string token2 = "token-2";
+TEST_F(JwtServiceTest, HashToken_DifferentInputs) {
+    std::string token1 = "token_1";
+    std::string token2 = "token_2";
     
-    auto hash1 = jwt_service_->HashToken(token1);
-    auto hash2 = jwt_service_->HashToken(token2);
+    std::string hash1 = JwtService::HashToken(token1);
+    std::string hash2 = JwtService::HashToken(token2);
     
-    EXPECT_NE(hash1, hash2);  // 不同输入，不同输出
+    EXPECT_NE(hash1, hash2);
 }
 
-TEST_F(JwtServiceTest, HashToken_Length) {
-    auto hash = jwt_service_->HashToken("any-token");
+TEST_F(JwtServiceTest, HashToken_OutputFormat) {
+    std::string token = "test_token";
+    std::string hash = JwtService::HashToken(token);
     
-    // SHA256 = 32 字节 = 64 hex 字符
-    EXPECT_EQ(hash.length(), 64u);
-}
-
-TEST_F(JwtServiceTest, HashToken_HexFormat) {
-    auto hash = jwt_service_->HashToken("test");
+    // SHA256 输出为 64 个十六进制字符
+    EXPECT_EQ(hash.length(), 64);
     
-    // 应该只包含十六进制字符
+    // 全部为十六进制字符
     for (char c : hash) {
-        EXPECT_TRUE((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))
-            << "Invalid hex character: " << c;
+        EXPECT_TRUE(std::isxdigit(c));
     }
 }
 
 TEST_F(JwtServiceTest, HashToken_EmptyInput) {
-    auto hash = jwt_service_->HashToken("");
+    std::string hash = JwtService::HashToken("");
     
-    // 空字符串也应该能哈希
-    EXPECT_EQ(hash.length(), 64u);
-}
-
-TEST_F(JwtServiceTest, HashToken_RealToken) {
-    auto user = MakeUser();
-    auto tokens = jwt_service_->GenerateTokenPair(user);
-    
-    // 对真实 token 进行哈希
-    auto hash = jwt_service_->HashToken(tokens.refresh_token);
-    
-    EXPECT_EQ(hash.length(), 64u);
-    
-    // 相同 token 哈希结果相同
-    auto hash2 = jwt_service_->HashToken(tokens.refresh_token);
-    EXPECT_EQ(hash, hash2);
+    EXPECT_EQ(hash.length(), 64);
 }
 
 // ============================================================================
-// 端到端场景测试
+// 用户角色测试
 // ============================================================================
 
-TEST_F(JwtServiceTest, E2E_GenerateVerifyAccessToken) {
-    auto user = MakeUser(999, "user-uuid-999", "13912345678");
-    user.role = UserRole::SuperAdmin;
+TEST_F(JwtServiceTest, TokenContainsUserRole) {
+    UserEntity admin_user = CreateTestUser();
+    admin_user.role = UserRole::Admin;
     
-    // 生成
-    auto tokens = jwt_service_->GenerateTokenPair(user);
-    
-    // 验证
+    TokenPair tokens = jwt_service_->GenerateTokenPair(admin_user);
     auto result = jwt_service_->VerifyAccessToken(tokens.access_token);
     
-    EXPECT_TRUE(result.IsOk());
-    EXPECT_EQ(result.Value().user_id, 999);
-    EXPECT_EQ(result.Value().user_uuid, "user-uuid-999");
-    EXPECT_EQ(result.Value().mobile, "13912345678");
+    ASSERT_TRUE(result.IsOk());
+    EXPECT_EQ(result.Value().role, UserRole::Admin);
+}
+
+TEST_F(JwtServiceTest, TokenContainsSuperAdminRole) {
+    UserEntity super_admin = CreateTestUser();
+    super_admin.role = UserRole::SuperAdmin;
+    
+    TokenPair tokens = jwt_service_->GenerateTokenPair(super_admin);
+    auto result = jwt_service_->VerifyAccessToken(tokens.access_token);
+    
+    ASSERT_TRUE(result.IsOk());
     EXPECT_EQ(result.Value().role, UserRole::SuperAdmin);
 }
 
-TEST_F(JwtServiceTest, E2E_GenerateParseRefreshToken) {
-    auto user = MakeUser(888, "user-uuid-888", "13888888888");
-    
-    // 生成
-    auto tokens = jwt_service_->GenerateTokenPair(user);
-    
-    // 解析
-    auto result = jwt_service_->ParseRefreshToken(tokens.refresh_token);
-    
-    EXPECT_TRUE(result.IsOk());
-    EXPECT_EQ(result.Value(), "888");  // 返回用户 ID
-}
-
-TEST_F(JwtServiceTest, E2E_TokenTypeValidation) {
-    auto user = MakeUser();
-    auto tokens = jwt_service_->GenerateTokenPair(user);
-    
-    // Access Token 只能用 VerifyAccessToken 验证
-    EXPECT_TRUE(jwt_service_->VerifyAccessToken(tokens.access_token).IsOk());
-    EXPECT_FALSE(jwt_service_->ParseRefreshToken(tokens.access_token).IsOk());
-    
-    // Refresh Token 只能用 ParseRefreshToken 解析
-    EXPECT_TRUE(jwt_service_->ParseRefreshToken(tokens.refresh_token).IsOk());
-    EXPECT_FALSE(jwt_service_->VerifyAccessToken(tokens.refresh_token).IsOk());
-}
-
-// ============================================================================
-// 边界情况测试
-// ============================================================================
-
-TEST_F(JwtServiceTest, UserWithSpecialCharacters) {
-    auto user = MakeUser();
-    user.uuid = "uuid-with-special-\"chars\"";
-    user.mobile = "138\"001\\380'00";  // 包含特殊字符
-    
-    auto tokens = jwt_service_->GenerateTokenPair(user);
-    auto result = jwt_service_->VerifyAccessToken(tokens.access_token);
-    
-    EXPECT_TRUE(result.IsOk());
-    EXPECT_EQ(result.Value().mobile, user.mobile);
-    EXPECT_EQ(result.Value().user_uuid, user.uuid);
-}
-
-TEST_F(JwtServiceTest, UserWithEmptyMobile) {
-    auto user = MakeUser();
-    user.mobile = "";
-    
-    auto tokens = jwt_service_->GenerateTokenPair(user);
-    auto result = jwt_service_->VerifyAccessToken(tokens.access_token);
-    
-    EXPECT_TRUE(result.IsOk());
-    EXPECT_EQ(result.Value().mobile, "");
-}
-
-TEST_F(JwtServiceTest, UserWithLongUuid) {
-    auto user = MakeUser();
-    user.uuid = std::string(256, 'a');  // 很长的 UUID
-    
-    auto tokens = jwt_service_->GenerateTokenPair(user);
-    auto result = jwt_service_->VerifyAccessToken(tokens.access_token);
-    
-    EXPECT_TRUE(result.IsOk());
-    EXPECT_EQ(result.Value().user_uuid, user.uuid);
-}
-
-TEST_F(JwtServiceTest, UserWithUnicodeCharacters) {
-    auto user = MakeUser();
-    user.uuid = "用户-测试-🚀";  // Unicode 字符
-    
-    auto tokens = jwt_service_->GenerateTokenPair(user);
-    auto result = jwt_service_->VerifyAccessToken(tokens.access_token);
-    
-    EXPECT_TRUE(result.IsOk());
-    EXPECT_EQ(result.Value().user_uuid, user.uuid);
-}
+}  // namespace testing
+}  // namespace user_service

@@ -1,41 +1,30 @@
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/test)
+# tests/handlers/CMakeLists.txt
 
-add_executable(auth_handler_test auth_handler_test.cpp)
-
-target_include_directories(auth_handler_test PRIVATE
-    ${PROJECT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${PROJECT_BINARY_DIR}/api/generated
+# 添加测试可执行文件
+add_executable(handlers_test
+    auth_handler_test.cpp
+    user_handler_test.cpp
 )
 
-target_link_libraries(auth_handler_test PRIVATE
+# 包含目录
+target_include_directories(handlers_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/tests/handlers
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# 链接库
+target_link_libraries(handlers_test PRIVATE
     user_handler
+    user_service
+    user_auth
     proto_lib
     GTest::gtest
-    GTest::gmock
     GTest::gtest_main
-)
-
-add_dependencies(auth_handler_test proto_lib)
-
-add_executable(user_handler_test user_handler_test.cpp)
-
-target_include_directories(user_handler_test PRIVATE
-    ${PROJECT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${PROJECT_BINARY_DIR}/api/generated
-)
-
-target_link_libraries(user_handler_test PRIVATE
-    user_handler
-    proto_lib
-    GTest::gtest
     GTest::gmock
-    GTest::gtest_main
+    GTest::gmock_main
 )
 
-add_dependencies(user_handler_test proto_lib)
-
+# 添加到 CTest
 include(GoogleTest)
-gtest_discover_tests(auth_handler_test)
-gtest_discover_tests(user_handler_test)
+gtest_discover_tests(handlers_test)

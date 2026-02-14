@@ -32,33 +32,33 @@ public:
     // ==================== CRUD 操作 ====================
     
     // 创建用户
-    Result<UserEntity> Create(const UserEntity& user);
+    virtual Result<UserEntity> Create(const UserEntity& user);
     
     // 查询用户
-    Result<UserEntity> FindById(int64_t id);
-    Result<UserEntity> FindByUUID(const std::string& uuid);
-    Result<UserEntity> FindByMobile(const std::string& mobile);  // 手机号查询（登录用）
+    virtual Result<UserEntity> FindById(int64_t id);
+    virtual Result<UserEntity> FindByUUID(const std::string& uuid);
+    virtual Result<UserEntity> FindByMobile(const std::string& mobile);  // 手机号查询（登录用）
     
     // 更新用户
-    Result<void> Update(const UserEntity& user);
+    virtual Result<void> Update(const UserEntity& user);
     
     // 删除用户
-    Result<void> Delete(int64_t id);
-    Result<void> DeleteByUUID(const std::string& uuid);
+    virtual Result<void> Delete(int64_t id);
+    virtual Result<void> DeleteByUUID(const std::string& uuid);
     
     // ==================== 分页查询 ====================
     
     // 查询用户列表（分页查询：手机号模糊查询）
-    UserListResult FindAll(const PageParams& page, const std::string& mobile_filter = "");
+    virtual UserListResult FindAll(const PageParams& page, const std::string& mobile_filter = "");
     
     // 查询用户列表（分页查询：多参数查询）
-    Result<std::vector<UserEntity>> FindAll(const UserQueryParams& params);
+    virtual Result<std::vector<UserEntity>> FindAll(const UserQueryParams& params);
     // ==================== 辅助查询 ====================
     // 判断是否存在
-    Result<bool> ExistsByMobile(const std::string& mobile);
+    virtual Result<bool> ExistsByMobile(const std::string& mobile);
 
     // 统计用户数量
-    Result<int64_t> Count(const UserQueryParams& params);
+    virtual Result<int64_t> Count(const UserQueryParams& params);
 
 private:
     // 根据字段寻找

@@ -98,22 +98,31 @@ redis:
 
 # ==================== ZooKeeper 配置 ====================
 zookeeper:
-  hosts: "localhost:2181"                # 多个节点用逗号分隔
-  session_timeout_ms: 30000
-  connection_timeout_ms: 10000
+  # 连接配置
+  hosts: "localhost:2181"                # 多个节点用逗号分隔，如 "10.0.0.1:2181,10.0.0.2:2181"
+  session_timeout_ms: 30000              # 会话超时（毫秒），推荐 10000-30000
+  connect_timeout_ms: 10000              # 连接超时（毫秒）
   
   # 服务注册
-  service_path: "/services/user-service"
+  root_path: "/services"                 # 服务根路径
+  service_name: "user-service"           # 当前服务名称
   
-  # 认证（可选）
-  auth:
-    scheme: ""                           # digest / sasl
-    credentials: ""
+  # 开关
+  enabled: true                          # 是否启用 ZK
+  register_self: true                    # 是否注册自身（服务端 true，纯客户端 false）
+  
+  # 元数据（负载均衡/路由用）
+  weight: 100                            # 服务权重
+  region: ""                             # 区域标识，如 "cn-east"
+  zone: ""                               # 可用区，如 "zone-a"
+  version: "1.0.0"                       # 服务版本
+
+  
 
 # ==================== 日志配置 ====================
 log:
   level: "debug"                          # trace / debug / info / warn / error / critical
-  path: "/app/logs"
+  path: "./logs"
   filename: "user-service.log"
   
   # 日志轮转

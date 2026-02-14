@@ -6,6 +6,32 @@ version: '3.8'
 
 services:
   # ==========================================================
+  # ZooKeeper 服务注册中心
+  # ==========================================================
+  zookeeper:
+    image: zookeeper:3.8                      # 官方 ZooKeeper 镜像
+    container_name: user-service-zookeeper
+    ports:
+      - "2181:2181"                           # 客户端连接端口
+      - "8080:8080"                           # AdminServer 端口（可选）
+    environment:
+      ZOO_MY_ID: 1                            # 节点 ID（单节点设为 1）
+      ZOO_TICK_TIME: 2000                     # 基本时间单位（毫秒）
+      ZOO_INIT_LIMIT: 5                       # 初始化连接超时（tick 数）
+      ZOO_SYNC_LIMIT: 2                       # 同步超时（tick 数）
+    volumes:
+      - zookeeper_data:/data                  # 数据持久化
+      - zookeeper_logs:/datalog               # 事务日志持久化
+    networks:
+      - user-network
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+        # ↑ 发送 ruok 命令，期望返回 imok
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================================
   # MySQL 数据库服务
   # ==========================================================
   mysql:
@@ -50,39 +76,94 @@ services:
       retries: 5
 
   # ==========================================================
-  # 用户服务实例 1
+  # User Service 用户服务
   # ==========================================================
-  user-service-1:
+  user-service:
     build:
       context: .                              # 构建上下文为当前目录
       dockerfile: deploy/docker/Dockerfile    # Dockerfile 路径
-    container_name: user-service-1
+    container_name: user-service
     depends_on:
       # ↓ 依赖的服务必须健康才启动（避免连接失败）
       mysql:
         condition: service_healthy
       redis:
         condition: service_healthy
+      zookeeper:
+        condition: service_healthy
     environment:
       - CONFIG_PATH=/app/configs/config.docker.yaml
         # ↑ 告诉应用配置文件位置
+      - SERVICE_NAME=user-service
       - MYSQL_HOST=mysql                      # 用容器名作为主机名
       - REDIS_HOST=redis
+      - ZK_HOSTS=zookeeper:2181               # ZooKeeper 地址
+      - ZK_ROOT_PATH=/services
+      - ZK_SERVICE_NAME=user-service          # 服务名称
+      - ZK_ENABLED=true
+      - ZK_REGISTER_SELF=true
     ports:
       - "50051:50051"                         # gRPC 端口映射
+      - "9091:9090"                           # Metrics 端口映射
     volumes:
       - ./configs:/app/configs:ro             # 挂载配置目录（只读）
-      - ./logs:/app/logs                      # 挂载日志目录（可写）
+      - ./logs/user-service:/app/logs         # 挂载日志目录（可写）
     networks:
       - user-network
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:50051"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================================
+  # Auth Service 认证服务
+  # ==========================================================
+  auth-service:
+    build:
+      context: .                              # 构建上下文为当前目录
+      dockerfile: deploy/docker/Dockerfile    # Dockerfile 路径（可共用或单独）
+    container_name: auth-service
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      zookeeper:
+        condition: service_healthy
+    environment:
+      - CONFIG_PATH=/app/configs/config.docker.yaml
+      - SERVICE_NAME=auth-service
+      - MYSQL_HOST=mysql
+      - REDIS_HOST=redis
+      - ZK_HOSTS=zookeeper:2181
+      - ZK_ROOT_PATH=/services
+      - ZK_SERVICE_NAME=auth-service          # ← 区分服务名称
+      - ZK_ENABLED=true
+      - ZK_REGISTER_SELF=true
+    ports:
+      - "50052:50051"                         # gRPC 端口（主机用不同端口）
+      - "9092:9090"                           # Metrics 端口
+    volumes:
+      - ./configs:/app/configs:ro
+      - ./logs/auth-service:/app/logs         # 日志分开存放
+    networks:
+      - user-network
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:50051"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 
 # ==============================================================
 # 命名卷（Docker 管理的持久化存储）
 # ==============================================================
 volumes:
-  mysql_data:     # MySQL 数据
-  redis_data:     # Redis 数据
+  mysql_data:       # MySQL 数据
+  redis_data:       # Redis 数据
+  zookeeper_data:   # ZooKeeper 数据
+  zookeeper_logs:   # ZooKeeper 事务日志
 
 # ==============================================================
 # 自定义网络

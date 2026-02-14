@@ -1,0 +1,94 @@
+# ==================== 服务器配置 ====================
+server:
+  host: "0.0.0.0"
+  grpc_port: 50051
+  metrics_port: 9090
+
+# ==================== MySQL 配置 ====================
+mysql:
+  host: "mysql"                      # 容器名
+  port: 3306
+  database: "user_service"
+  username: "root"
+  password: "root123"
+  pool_size: 10
+  connection_timeout_ms: 5000
+  read_timeout_ms: 30000
+  write_timeout_ms: 30000
+  max_retries: 3
+  retry_interval_ms: 1000
+  auto_reconnect: true
+  charset: "utf8mb4"
+
+# ==================== Redis 配置 ====================
+redis:
+  host: "redis"                      # 容器名
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 5
+  connect_timeout_ms: 3000
+  socket_timeout_ms: 3000
+  wait_timeout_ms: 100
+
+# ==================== ZooKeeper 配置 ====================
+zookeeper:
+  hosts: "zookeeper:2181"
+  session_timeout_ms: 30000
+  connect_timeout_ms: 10000
+  root_path: "/services"
+  service_name: "user-service"       # 会被环境变量覆盖
+  enabled: true
+  register_self: true
+  weight: 100
+  region: "docker"
+  zone: "local"
+  version: "1.0.0"
+
+# ==================== 日志配置 ====================
+log:
+  level: "info"
+  path: "/app/logs"
+  filename: "app.log"
+  max_size: 10485760                 # 10MB
+  max_files: 5
+  console_output: true
+
+# ==================== 安全配置 ====================
+security:
+  jwt_secret: "your-super-secret-key-change-in-production-at-least-32-bytes!"
+  jwt_issuer: "user-service"
+  access_token_ttl_seconds: 900      # 15分钟
+  refresh_token_ttl_seconds: 604800  # 7天
+
+# ==================== 短信验证码配置 ====================
+sms:
+  code_len: 6
+  code_ttl_seconds: 300
+  send_interval_seconds: 60
+  max_retry_count: 5
+  retry_ttl_seconds: 300
+  lock_seconds: 1800
+
+# ==================== 登录安全配置 ====================
+login:
+  max_failed_attempts: 5
+  failed_attempts_window: 900
+  lock_duration_seconds: 1800
+  max_sessions_per_user: 5
+  kick_oldest_session: true
+  enable_password_login: true
+  enable_sms_login: true
+  require_captcha: false
+  captcha_after_failed_attempts: 3
+
+# ==================== 密码策略配置 ====================
+password:
+  min_length: 8
+  max_length: 32
+  require_uppercase: false
+  require_lowercase: false
+  require_digit: true
+  require_special_char: false
+  expire_days: 0
+  history_count: 0

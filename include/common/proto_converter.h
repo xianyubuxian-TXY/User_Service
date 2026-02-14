@@ -210,6 +210,18 @@ inline void ToProtoUser(const UserEntity& src, pb_user::User* dst) {
     *dst->mutable_updated_at() = ToProtoTimestamp(src.updated_at);
 }
 
+/// @brief pb_auth::UserInfo → UserEntity
+inline UserEntity FromProtoUserInfo(const pb_auth::UserInfo& src) {
+    UserEntity entity;
+    entity.uuid = src.id();
+    entity.mobile = src.mobile();
+    entity.display_name = src.display_name();
+    entity.role = FromProtoUserRole(src.role());
+    entity.disabled = src.disabled();
+    entity.created_at = FromProtoTimestamp(src.created_at());
+    return entity;
+}
+
 /// @brief pb_user::User → UserEntity（部分字段，用于更新）
 inline UserEntity FromProtoUser(const pb_user::User& src) {
     UserEntity entity;

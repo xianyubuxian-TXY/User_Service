@@ -145,6 +145,10 @@ public:
     /// @brief Ping 测试连接
     virtual Result<void> Ping() noexcept;
 
+protected:
+    // 供 Mock 使用的受保护构造函数
+    RedisClient() = default;
+
 private:
     std::unique_ptr<sw::redis::Redis> redis_;
 };

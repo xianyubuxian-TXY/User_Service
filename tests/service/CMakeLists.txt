@@ -1,25 +1,49 @@
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/test)
+# tests/service/CMakeLists.txt
 
-add_executable(service_test
+# AuthService 测试
+add_executable(auth_service_test
     auth_service_test.cpp
+)
+
+target_include_directories(auth_service_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/tests/service
+)
+
+target_link_libraries(auth_service_test
+    GTest::gtest
+    GTest::gtest_main
+    GTest::gmock
+    user_service
+    user_auth
+    user_db
+    user_cache
+    user_common
+    user_config
+)
+
+add_test(NAME auth_service_test COMMAND auth_service_test)
+
+# UserService 测试
+add_executable(user_service_test
     user_service_test.cpp
 )
 
-target_include_directories(service_test PRIVATE
+target_include_directories(user_service_test PRIVATE
     ${PROJECT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tests/service
 )
 
-target_link_libraries(service_test PRIVATE
-    user_service
-    user_auth
-    user_cache
-    user_db
-    user_common
-    user_config
-    uuid
+target_link_libraries(user_service_test
     GTest::gtest
     GTest::gtest_main
+    GTest::gmock
+    user_service
+    user_auth
+    user_db
+    user_cache
+    user_common
+    user_config
 )
 
-add_test(NAME ServiceTest COMMAND service_test)
+add_test(NAME user_service_test COMMAND user_service_test)

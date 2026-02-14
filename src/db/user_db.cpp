@@ -213,14 +213,16 @@ UserDB::UserListResult UserDB::FindAll(const PageParams& page, const std::string
         result.second = PageResult::Create(page.page, page.page_size, total_records);
 
         // 3. 分页查询数据
-        int offset = page.Offset();
+        int64_t offset = static_cast<int64_t>(page.Offset());
+        int64_t limit = static_cast<int64_t>(page.page_size);
+        
         std::string data_sql = "SELECT * FROM users WHERE mobile LIKE ? "
                                "ORDER BY created_at DESC, id DESC "
                                "LIMIT ?, ?";
         auto data_res = conn->Query(data_sql, {
             like_pattern, 
-            std::to_string(offset), 
-            std::to_string(page.page_size)
+            offset,
+            limit
         });
         
         // 为 vector 预分配内存，避免频繁扩容
@@ -265,8 +267,8 @@ Result<std::vector<UserEntity>> UserDB::FindAll(const UserQueryParams& params) {
 
         // 排序 + 分页
         sql += " ORDER BY created_at DESC, id DESC LIMIT ?, ?";
-        bindings.push_back(params.page_params.Offset());
-        bindings.push_back(params.page_params.page_size);
+        bindings.push_back(static_cast<int64_t>(params.page_params.Offset()));
+        bindings.push_back(static_cast<int64_t>(params.page_params.page_size));
 
         // 执行查询
         auto res = conn->Query(sql, bindings);

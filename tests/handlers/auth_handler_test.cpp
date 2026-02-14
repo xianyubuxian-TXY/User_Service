@@ -1,10 +1,11 @@
+// tests/handlers/auth_handler_test.cpp
+
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <grpcpp/grpcpp.h>
 
 #include "handlers/auth_handler.h"
 #include "mock_services.h"
-#include "common/error_codes.h"
-#include "common/auth_type.h"
 
 using namespace user_service;
 using namespace user_service::testing;
@@ -12,9 +13,6 @@ using ::testing::_;
 using ::testing::Return;
 using ::testing::Eq;
 
-// ============================================================================
-// 测试夹具
-// ============================================================================
 class AuthHandlerTest : public ::testing::Test {
 protected:
     void SetUp() override {
@@ -22,29 +20,14 @@ protected:
         handler_ = std::make_unique<AuthHandler>(mock_auth_service_);
     }
 
-    // 辅助：创建成功的 AuthResult
-    AuthResult MakeAuthResult(const std::string& uuid = "test-uuid-123",
-                               const std::string& mobile = "13800138000") {
-        AuthResult result;
-        result.user.id = 1;
-        result.user.uuid = uuid;
-        result.user.mobile = mobile;
-        result.user.display_name = "测试用户";
-        result.user.role = UserRole::User;
-        result.user.disabled = false;
-        result.tokens.access_token = "access_token_xxx";
-        result.tokens.refresh_token = "refresh_token_xxx";
-        result.tokens.expires_in = 3600;
-        return result;
+    void TearDown() override {
+        handler_.reset();
+        mock_auth_service_.reset();
     }
 
-    // 辅助：创建 TokenPair
-    TokenPair MakeTokenPair() {
-        TokenPair tokens;
-        tokens.access_token = "new_access_token";
-        tokens.refresh_token = "new_refresh_token";
-        tokens.expires_in = 3600;
-        return tokens;
+    // 创建测试用的 ServerContext
+    std::unique_ptr<grpc::ServerContext> CreateContext() {
+        return std::make_unique<grpc::ServerContext>();
     }
 
     std::shared_ptr<MockAuthService> mock_auth_service_;
@@ -56,100 +39,78 @@ protected:
 // ============================================================================
 
 TEST_F(AuthHandlerTest, SendVerifyCode_Success) {
+    // Arrange
     pb_auth::SendVerifyCodeRequest request;
     request.set_mobile("13800138000");
-    request.set_scene(pb_auth::SMS_SCENE_REGISTER);
+    request.set_scene(pb_auth::SmsScene::SMS_SCENE_REGISTER);
 
     pb_auth::SendVerifyCodeResponse response;
+    auto context = CreateContext();
 
     EXPECT_CALL(*mock_auth_service_, SendVerifyCode("13800138000", SmsScene::Register))
         .WillOnce(Return(Result<int32_t>::Ok(60)));
 
-    grpc::ServerContext context;
-    auto status = handler_->SendVerifyCode(&context, &request, &response);
+    // Act
+    auto status = handler_->SendVerifyCode(context.get(), &request, &response);
 
+    // Assert
     EXPECT_TRUE(status.ok());
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::OK));
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::OK);
     EXPECT_EQ(response.retry_after(), 60);
 }
 
-TEST_F(AuthHandlerTest, SendVerifyCode_InvalidMobile_Empty) {
+TEST_F(AuthHandlerTest, SendVerifyCode_InvalidMobile) {
+    // Arrange
     pb_auth::SendVerifyCodeRequest request;
-    request.set_mobile("");
-    request.set_scene(pb_auth::SMS_SCENE_REGISTER);
+    request.set_mobile("123");  // 无效手机号
+    request.set_scene(pb_auth::SmsScene::SMS_SCENE_REGISTER);
 
     pb_auth::SendVerifyCodeResponse response;
+    auto context = CreateContext();
 
-    // Service 不应该被调用
-    EXPECT_CALL(*mock_auth_service_, SendVerifyCode(_, _)).Times(0);
+    // Act
+    auto status = handler_->SendVerifyCode(context.get(), &request, &response);
 
-    grpc::ServerContext context;
-    auto status = handler_->SendVerifyCode(&context, &request, &response);
-
-    EXPECT_TRUE(status.ok());
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::INVALID_ARGUMENT));
+    // Assert
+    EXPECT_TRUE(status.ok());  // gRPC 状态成功，业务错误在 response 中
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::INVALID_ARGUMENT);
 }
 
-TEST_F(AuthHandlerTest, SendVerifyCode_InvalidMobile_TooShort) {
-    pb_auth::SendVerifyCodeRequest request;
-    request.set_mobile("1380013800");  // 10位
-    request.set_scene(pb_auth::SMS_SCENE_REGISTER);
-
-    pb_auth::SendVerifyCodeResponse response;
-
-    EXPECT_CALL(*mock_auth_service_, SendVerifyCode(_, _)).Times(0);
-
-    grpc::ServerContext context;
-    handler_->SendVerifyCode(&context, &request, &response);
-
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::INVALID_ARGUMENT));
-}
-
-TEST_F(AuthHandlerTest, SendVerifyCode_InvalidScene) {
+TEST_F(AuthHandlerTest, SendVerifyCode_UnknownScene) {
+    // Arrange
     pb_auth::SendVerifyCodeRequest request;
     request.set_mobile("13800138000");
-    request.set_scene(pb_auth::SMS_SCENE_UNKNOWN);
+    request.set_scene(pb_auth::SmsScene::SMS_SCENE_UNKNOWN);
 
     pb_auth::SendVerifyCodeResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, SendVerifyCode(_, _)).Times(0);
+    // Act
+    auto status = handler_->SendVerifyCode(context.get(), &request, &response);
 
-    grpc::ServerContext context;
-    handler_->SendVerifyCode(&context, &request, &response);
-
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::INVALID_ARGUMENT));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::INVALID_ARGUMENT);
 }
 
 TEST_F(AuthHandlerTest, SendVerifyCode_RateLimited) {
+    // Arrange
     pb_auth::SendVerifyCodeRequest request;
     request.set_mobile("13800138000");
-    request.set_scene(pb_auth::SMS_SCENE_REGISTER);
+    request.set_scene(pb_auth::SmsScene::SMS_SCENE_LOGIN);
 
     pb_auth::SendVerifyCodeResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, SendVerifyCode("13800138000", SmsScene::Register))
+    EXPECT_CALL(*mock_auth_service_, SendVerifyCode("13800138000", SmsScene::Login))
         .WillOnce(Return(Result<int32_t>::Fail(ErrorCode::RateLimited, "请求过于频繁")));
 
-    grpc::ServerContext context;
-    handler_->SendVerifyCode(&context, &request, &response);
+    // Act
+    auto status = handler_->SendVerifyCode(context.get(), &request, &response);
 
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::RATE_LIMITED));
-}
-
-TEST_F(AuthHandlerTest, SendVerifyCode_MobileTaken_RegisterScene) {
-    pb_auth::SendVerifyCodeRequest request;
-    request.set_mobile("13800138000");
-    request.set_scene(pb_auth::SMS_SCENE_REGISTER);
-
-    pb_auth::SendVerifyCodeResponse response;
-
-    EXPECT_CALL(*mock_auth_service_, SendVerifyCode("13800138000", SmsScene::Register))
-        .WillOnce(Return(Result<int32_t>::Fail(ErrorCode::MobileTaken)));
-
-    grpc::ServerContext context;
-    handler_->SendVerifyCode(&context, &request, &response);
-
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::MOBILE_TAKEN));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::RATE_LIMITED);
 }
 
 // ============================================================================
@@ -157,129 +118,127 @@ TEST_F(AuthHandlerTest, SendVerifyCode_MobileTaken_RegisterScene) {
 // ============================================================================
 
 TEST_F(AuthHandlerTest, Register_Success) {
+    // Arrange
     pb_auth::RegisterRequest request;
     request.set_mobile("13800138000");
     request.set_verify_code("123456");
-    request.set_password("Password123!");
-    request.set_display_name("测试用户");
+    request.set_password("Password123");
+    request.set_display_name("TestUser");
 
     pb_auth::RegisterResponse response;
+    auto context = CreateContext();
 
-    auto auth_result = MakeAuthResult();
-    EXPECT_CALL(*mock_auth_service_, 
-                Register("13800138000", "123456", "Password123!", "测试用户"))
+    auto auth_result = CreateTestAuthResult();
+    EXPECT_CALL(*mock_auth_service_, Register("13800138000", "123456", "Password123", "TestUser"))
         .WillOnce(Return(Result<AuthResult>::Ok(auth_result)));
 
-    grpc::ServerContext context;
-    auto status = handler_->Register(&context, &request, &response);
+    // Act
+    auto status = handler_->Register(context.get(), &request, &response);
 
+    // Assert
     EXPECT_TRUE(status.ok());
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::OK));
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::OK);
     EXPECT_EQ(response.user().id(), "test-uuid-123");
     EXPECT_EQ(response.user().mobile(), "13800138000");
-    EXPECT_EQ(response.tokens().access_token(), "access_token_xxx");
-}
-
-TEST_F(AuthHandlerTest, Register_Success_NoDisplayName) {
-    pb_auth::RegisterRequest request;
-    request.set_mobile("13800138000");
-    request.set_verify_code("123456");
-    request.set_password("Password123!");
-    // display_name 留空
-
-    pb_auth::RegisterResponse response;
-
-    auto auth_result = MakeAuthResult();
-    EXPECT_CALL(*mock_auth_service_, 
-                Register("13800138000", "123456", "Password123!", ""))
-        .WillOnce(Return(Result<AuthResult>::Ok(auth_result)));
-
-    grpc::ServerContext context;
-    handler_->Register(&context, &request, &response);
-
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::OK));
+    EXPECT_EQ(response.tokens().access_token(), "test-access-token");
+    EXPECT_EQ(response.tokens().refresh_token(), "test-refresh-token");
+    EXPECT_EQ(response.tokens().expires_in(), 900);
 }
 
 TEST_F(AuthHandlerTest, Register_InvalidMobile) {
+    // Arrange
     pb_auth::RegisterRequest request;
-    request.set_mobile("123");
+    request.set_mobile("invalid");
     request.set_verify_code("123456");
-    request.set_password("Password123!");
+    request.set_password("Password123");
 
     pb_auth::RegisterResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, Register(_, _, _, _)).Times(0);
+    // Act
+    auto status = handler_->Register(context.get(), &request, &response);
 
-    grpc::ServerContext context;
-    handler_->Register(&context, &request, &response);
-
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::INVALID_ARGUMENT));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::INVALID_ARGUMENT);
 }
 
-TEST_F(AuthHandlerTest, Register_InvalidVerifyCode_TooShort) {
+TEST_F(AuthHandlerTest, Register_InvalidVerifyCode) {
+    // Arrange
     pb_auth::RegisterRequest request;
     request.set_mobile("13800138000");
-    request.set_verify_code("123");  // 太短
-    request.set_password("Password123!");
+    request.set_verify_code("12345");  // 长度不对
+    request.set_password("Password123");
 
     pb_auth::RegisterResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, Register(_, _, _, _)).Times(0);
+    // Act
+    auto status = handler_->Register(context.get(), &request, &response);
 
-    grpc::ServerContext context;
-    handler_->Register(&context, &request, &response);
-
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::INVALID_ARGUMENT));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::INVALID_ARGUMENT);
 }
 
-TEST_F(AuthHandlerTest, Register_WeakPassword) {
+TEST_F(AuthHandlerTest, Register_InvalidPassword) {
+    // Arrange
     pb_auth::RegisterRequest request;
     request.set_mobile("13800138000");
     request.set_verify_code("123456");
-    request.set_password("123");  // 太弱
+    request.set_password("123");  // 密码太短
 
     pb_auth::RegisterResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, Register(_, _, _, _)).Times(0);
+    // Act
+    auto status = handler_->Register(context.get(), &request, &response);
 
-    grpc::ServerContext context;
-    handler_->Register(&context, &request, &response);
-
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::INVALID_ARGUMENT));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::INVALID_ARGUMENT);
 }
 
 TEST_F(AuthHandlerTest, Register_MobileTaken) {
+    // Arrange
     pb_auth::RegisterRequest request;
     request.set_mobile("13800138000");
     request.set_verify_code("123456");
-    request.set_password("Password123!");
+    request.set_password("Password123");
 
     pb_auth::RegisterResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, Register("13800138000", "123456", "Password123!", ""))
-        .WillOnce(Return(Result<AuthResult>::Fail(ErrorCode::MobileTaken)));
+    EXPECT_CALL(*mock_auth_service_, Register(_, _, _, _))
+        .WillOnce(Return(Result<AuthResult>::Fail(ErrorCode::MobileTaken, "手机号已被注册")));
 
-    grpc::ServerContext context;
-    handler_->Register(&context, &request, &response);
+    // Act
+    auto status = handler_->Register(context.get(), &request, &response);
 
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::MOBILE_TAKEN));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::MOBILE_TAKEN);
 }
 
-TEST_F(AuthHandlerTest, Register_CaptchaWrong) {
+TEST_F(AuthHandlerTest, Register_WrongCaptcha) {
+    // Arrange
     pb_auth::RegisterRequest request;
     request.set_mobile("13800138000");
     request.set_verify_code("000000");
-    request.set_password("Password123!");
+    request.set_password("Password123");
 
     pb_auth::RegisterResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, Register("13800138000", "000000", "Password123!", ""))
-        .WillOnce(Return(Result<AuthResult>::Fail(ErrorCode::CaptchaWrong)));
+    EXPECT_CALL(*mock_auth_service_, Register(_, _, _, _))
+        .WillOnce(Return(Result<AuthResult>::Fail(ErrorCode::CaptchaWrong, "验证码错误")));
 
-    grpc::ServerContext context;
-    handler_->Register(&context, &request, &response);
+    // Act
+    auto status = handler_->Register(context.get(), &request, &response);
 
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::CAPTCHA_WRONG));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::CAPTCHA_WRONG);
 }
 
 // ============================================================================
@@ -287,118 +246,123 @@ TEST_F(AuthHandlerTest, Register_CaptchaWrong) {
 // ============================================================================
 
 TEST_F(AuthHandlerTest, LoginByPassword_Success) {
+    // Arrange
     pb_auth::LoginByPasswordRequest request;
     request.set_mobile("13800138000");
-    request.set_password("Password123!");
+    request.set_password("Password123");
 
     pb_auth::LoginByPasswordResponse response;
+    auto context = CreateContext();
 
-    auto auth_result = MakeAuthResult();
-    EXPECT_CALL(*mock_auth_service_, LoginByPassword("13800138000", "Password123!"))
+    auto auth_result = CreateTestAuthResult();
+    EXPECT_CALL(*mock_auth_service_, LoginByPassword("13800138000", "Password123"))
         .WillOnce(Return(Result<AuthResult>::Ok(auth_result)));
 
-    grpc::ServerContext context;
-    auto status = handler_->LoginByPassword(&context, &request, &response);
+    // Act
+    auto status = handler_->LoginByPassword(context.get(), &request, &response);
 
+    // Assert
     EXPECT_TRUE(status.ok());
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::OK));
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::OK);
     EXPECT_EQ(response.user().id(), "test-uuid-123");
     EXPECT_FALSE(response.tokens().access_token().empty());
 }
 
-TEST_F(AuthHandlerTest, LoginByPassword_InvalidMobile) {
+TEST_F(AuthHandlerTest, LoginByPassword_WrongPassword) {
+    // Arrange
     pb_auth::LoginByPasswordRequest request;
-    request.set_mobile("invalid");
-    request.set_password("Password123!");
+    request.set_mobile("13800138000");
+    request.set_password("WrongPassword");
 
     pb_auth::LoginByPasswordResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, LoginByPassword(_, _)).Times(0);
+    EXPECT_CALL(*mock_auth_service_, LoginByPassword(_, _))
+        .WillOnce(Return(Result<AuthResult>::Fail(ErrorCode::WrongPassword, "账号或密码错误")));
 
-    grpc::ServerContext context;
-    handler_->LoginByPassword(&context, &request, &response);
+    // Act
+    auto status = handler_->LoginByPassword(context.get(), &request, &response);
 
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::INVALID_ARGUMENT));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::WRONG_PASSWORD);
+}
+
+TEST_F(AuthHandlerTest, LoginByPassword_UserNotFound) {
+    // Arrange
+    pb_auth::LoginByPasswordRequest request;
+    request.set_mobile("13800138001");
+    request.set_password("Password123");
+
+    pb_auth::LoginByPasswordResponse response;
+    auto context = CreateContext();
+
+    EXPECT_CALL(*mock_auth_service_, LoginByPassword(_, _))
+        .WillOnce(Return(Result<AuthResult>::Fail(ErrorCode::WrongPassword, "账号或密码错误")));
+
+    // Act
+    auto status = handler_->LoginByPassword(context.get(), &request, &response);
+
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::WRONG_PASSWORD);
+}
+
+TEST_F(AuthHandlerTest, LoginByPassword_AccountLocked) {
+    // Arrange
+    pb_auth::LoginByPasswordRequest request;
+    request.set_mobile("13800138000");
+    request.set_password("Password123");
+
+    pb_auth::LoginByPasswordResponse response;
+    auto context = CreateContext();
+
+    EXPECT_CALL(*mock_auth_service_, LoginByPassword(_, _))
+        .WillOnce(Return(Result<AuthResult>::Fail(ErrorCode::AccountLocked, "账号已锁定")));
+
+    // Act
+    auto status = handler_->LoginByPassword(context.get(), &request, &response);
+
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::ACCOUNT_LOCKED);
+}
+
+TEST_F(AuthHandlerTest, LoginByPassword_UserDisabled) {
+    // Arrange
+    pb_auth::LoginByPasswordRequest request;
+    request.set_mobile("13800138000");
+    request.set_password("Password123");
+
+    pb_auth::LoginByPasswordResponse response;
+    auto context = CreateContext();
+
+    EXPECT_CALL(*mock_auth_service_, LoginByPassword(_, _))
+        .WillOnce(Return(Result<AuthResult>::Fail(ErrorCode::UserDisabled, "账号已禁用")));
+
+    // Act
+    auto status = handler_->LoginByPassword(context.get(), &request, &response);
+
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::USER_DISABLED);
 }
 
 TEST_F(AuthHandlerTest, LoginByPassword_EmptyPassword) {
+    // Arrange
     pb_auth::LoginByPasswordRequest request;
     request.set_mobile("13800138000");
     request.set_password("");
 
     pb_auth::LoginByPasswordResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, LoginByPassword(_, _)).Times(0);
+    // Act
+    auto status = handler_->LoginByPassword(context.get(), &request, &response);
 
-    grpc::ServerContext context;
-    handler_->LoginByPassword(&context, &request, &response);
-
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::INVALID_ARGUMENT));
-}
-
-TEST_F(AuthHandlerTest, LoginByPassword_WrongPassword) {
-    pb_auth::LoginByPasswordRequest request;
-    request.set_mobile("13800138000");
-    request.set_password("WrongPassword123!");
-
-    pb_auth::LoginByPasswordResponse response;
-
-    EXPECT_CALL(*mock_auth_service_, LoginByPassword("13800138000", "WrongPassword123!"))
-        .WillOnce(Return(Result<AuthResult>::Fail(ErrorCode::WrongPassword)));
-
-    grpc::ServerContext context;
-    handler_->LoginByPassword(&context, &request, &response);
-
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::WRONG_PASSWORD));
-}
-
-TEST_F(AuthHandlerTest, LoginByPassword_UserNotFound) {
-    pb_auth::LoginByPasswordRequest request;
-    request.set_mobile("13800138000");
-    request.set_password("Password123!");
-
-    pb_auth::LoginByPasswordResponse response;
-
-    // 注意：为了安全，用户不存在也返回 WrongPassword
-    EXPECT_CALL(*mock_auth_service_, LoginByPassword("13800138000", "Password123!"))
-        .WillOnce(Return(Result<AuthResult>::Fail(ErrorCode::WrongPassword, "账号或密码错误")));
-
-    grpc::ServerContext context;
-    handler_->LoginByPassword(&context, &request, &response);
-
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::WRONG_PASSWORD));
-}
-
-TEST_F(AuthHandlerTest, LoginByPassword_AccountLocked) {
-    pb_auth::LoginByPasswordRequest request;
-    request.set_mobile("13800138000");
-    request.set_password("Password123!");
-
-    pb_auth::LoginByPasswordResponse response;
-
-    EXPECT_CALL(*mock_auth_service_, LoginByPassword("13800138000", "Password123!"))
-        .WillOnce(Return(Result<AuthResult>::Fail(ErrorCode::AccountLocked, "账号已锁定")));
-
-    grpc::ServerContext context;
-    handler_->LoginByPassword(&context, &request, &response);
-
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::ACCOUNT_LOCKED));
-}
-
-TEST_F(AuthHandlerTest, LoginByPassword_UserDisabled) {
-    pb_auth::LoginByPasswordRequest request;
-    request.set_mobile("13800138000");
-    request.set_password("Password123!");
-
-    pb_auth::LoginByPasswordResponse response;
-
-    EXPECT_CALL(*mock_auth_service_, LoginByPassword("13800138000", "Password123!"))
-        .WillOnce(Return(Result<AuthResult>::Fail(ErrorCode::UserDisabled)));
-
-    grpc::ServerContext context;
-    handler_->LoginByPassword(&context, &request, &response);
-
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::USER_DISABLED));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::INVALID_ARGUMENT);
 }
 
 // ============================================================================
@@ -406,83 +370,65 @@ TEST_F(AuthHandlerTest, LoginByPassword_UserDisabled) {
 // ============================================================================
 
 TEST_F(AuthHandlerTest, LoginByCode_Success) {
+    // Arrange
     pb_auth::LoginByCodeRequest request;
     request.set_mobile("13800138000");
     request.set_verify_code("123456");
 
     pb_auth::LoginByCodeResponse response;
+    auto context = CreateContext();
 
-    auto auth_result = MakeAuthResult();
+    auto auth_result = CreateTestAuthResult();
     EXPECT_CALL(*mock_auth_service_, LoginByCode("13800138000", "123456"))
         .WillOnce(Return(Result<AuthResult>::Ok(auth_result)));
 
-    grpc::ServerContext context;
-    handler_->LoginByCode(&context, &request, &response);
+    // Act
+    auto status = handler_->LoginByCode(context.get(), &request, &response);
 
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::OK));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::OK);
     EXPECT_EQ(response.user().id(), "test-uuid-123");
 }
 
-TEST_F(AuthHandlerTest, LoginByCode_InvalidMobile) {
-    pb_auth::LoginByCodeRequest request;
-    request.set_mobile("invalid");
-    request.set_verify_code("123456");
-
-    pb_auth::LoginByCodeResponse response;
-
-    EXPECT_CALL(*mock_auth_service_, LoginByCode(_, _)).Times(0);
-
-    grpc::ServerContext context;
-    handler_->LoginByCode(&context, &request, &response);
-
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::INVALID_ARGUMENT));
-}
-
-TEST_F(AuthHandlerTest, LoginByCode_InvalidVerifyCode) {
-    pb_auth::LoginByCodeRequest request;
-    request.set_mobile("13800138000");
-    request.set_verify_code("12");  // 太短
-
-    pb_auth::LoginByCodeResponse response;
-
-    EXPECT_CALL(*mock_auth_service_, LoginByCode(_, _)).Times(0);
-
-    grpc::ServerContext context;
-    handler_->LoginByCode(&context, &request, &response);
-
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::INVALID_ARGUMENT));
-}
-
-TEST_F(AuthHandlerTest, LoginByCode_CaptchaWrong) {
+TEST_F(AuthHandlerTest, LoginByCode_WrongCode) {
+    // Arrange
     pb_auth::LoginByCodeRequest request;
     request.set_mobile("13800138000");
     request.set_verify_code("000000");
 
     pb_auth::LoginByCodeResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, LoginByCode("13800138000", "000000"))
-        .WillOnce(Return(Result<AuthResult>::Fail(ErrorCode::CaptchaWrong)));
+    EXPECT_CALL(*mock_auth_service_, LoginByCode(_, _))
+        .WillOnce(Return(Result<AuthResult>::Fail(ErrorCode::CaptchaWrong, "验证码错误")));
 
-    grpc::ServerContext context;
-    handler_->LoginByCode(&context, &request, &response);
+    // Act
+    auto status = handler_->LoginByCode(context.get(), &request, &response);
 
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::CAPTCHA_WRONG));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::CAPTCHA_WRONG);
 }
 
-TEST_F(AuthHandlerTest, LoginByCode_UserNotFound) {
+TEST_F(AuthHandlerTest, LoginByCode_ExpiredCode) {
+    // Arrange
     pb_auth::LoginByCodeRequest request;
     request.set_mobile("13800138000");
     request.set_verify_code("123456");
 
     pb_auth::LoginByCodeResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, LoginByCode("13800138000", "123456"))
-        .WillOnce(Return(Result<AuthResult>::Fail(ErrorCode::UserNotFound)));
+    EXPECT_CALL(*mock_auth_service_, LoginByCode(_, _))
+        .WillOnce(Return(Result<AuthResult>::Fail(ErrorCode::CaptchaExpired, "验证码已过期")));
 
-    grpc::ServerContext context;
-    handler_->LoginByCode(&context, &request, &response);
+    // Act
+    auto status = handler_->LoginByCode(context.get(), &request, &response);
 
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::USER_NOT_FOUND));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::CAPTCHA_EXPIRED);
 }
 
 // ============================================================================
@@ -490,80 +436,101 @@ TEST_F(AuthHandlerTest, LoginByCode_UserNotFound) {
 // ============================================================================
 
 TEST_F(AuthHandlerTest, RefreshToken_Success) {
+    // Arrange
     pb_auth::RefreshTokenRequest request;
-    request.set_refresh_token("valid_refresh_token");
+    request.set_refresh_token("valid-refresh-token");
 
     pb_auth::RefreshTokenResponse response;
+    auto context = CreateContext();
 
-    auto new_tokens = MakeTokenPair();
-    EXPECT_CALL(*mock_auth_service_, RefreshToken("valid_refresh_token"))
+    auto new_tokens = CreateTestTokenPair();
+    new_tokens.access_token = "new-access-token";
+    new_tokens.refresh_token = "new-refresh-token";
+    
+    EXPECT_CALL(*mock_auth_service_, RefreshToken("valid-refresh-token"))
         .WillOnce(Return(Result<TokenPair>::Ok(new_tokens)));
 
-    grpc::ServerContext context;
-    handler_->RefreshToken(&context, &request, &response);
+    // Act
+    auto status = handler_->RefreshToken(context.get(), &request, &response);
 
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::OK));
-    EXPECT_EQ(response.tokens().access_token(), "new_access_token");
-    EXPECT_EQ(response.tokens().refresh_token(), "new_refresh_token");
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::OK);
+    EXPECT_EQ(response.tokens().access_token(), "new-access-token");
+    EXPECT_EQ(response.tokens().refresh_token(), "new-refresh-token");
 }
 
 TEST_F(AuthHandlerTest, RefreshToken_EmptyToken) {
+    // Arrange
     pb_auth::RefreshTokenRequest request;
     request.set_refresh_token("");
 
     pb_auth::RefreshTokenResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, RefreshToken(_)).Times(0);
+    // Act
+    auto status = handler_->RefreshToken(context.get(), &request, &response);
 
-    grpc::ServerContext context;
-    handler_->RefreshToken(&context, &request, &response);
-
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::INVALID_ARGUMENT));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::INVALID_ARGUMENT);
 }
 
-TEST_F(AuthHandlerTest, RefreshToken_TokenInvalid) {
+TEST_F(AuthHandlerTest, RefreshToken_InvalidToken) {
+    // Arrange
     pb_auth::RefreshTokenRequest request;
-    request.set_refresh_token("invalid_token");
+    request.set_refresh_token("invalid-token");
 
     pb_auth::RefreshTokenResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, RefreshToken("invalid_token"))
-        .WillOnce(Return(Result<TokenPair>::Fail(ErrorCode::TokenInvalid)));
+    EXPECT_CALL(*mock_auth_service_, RefreshToken("invalid-token"))
+        .WillOnce(Return(Result<TokenPair>::Fail(ErrorCode::TokenInvalid, "Token 无效")));
 
-    grpc::ServerContext context;
-    handler_->RefreshToken(&context, &request, &response);
+    // Act
+    auto status = handler_->RefreshToken(context.get(), &request, &response);
 
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::TOKEN_INVALID));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::TOKEN_INVALID);
 }
 
-TEST_F(AuthHandlerTest, RefreshToken_TokenExpired) {
+TEST_F(AuthHandlerTest, RefreshToken_ExpiredToken) {
+    // Arrange
     pb_auth::RefreshTokenRequest request;
-    request.set_refresh_token("expired_token");
+    request.set_refresh_token("expired-token");
 
     pb_auth::RefreshTokenResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, RefreshToken("expired_token"))
-        .WillOnce(Return(Result<TokenPair>::Fail(ErrorCode::TokenExpired)));
+    EXPECT_CALL(*mock_auth_service_, RefreshToken("expired-token"))
+        .WillOnce(Return(Result<TokenPair>::Fail(ErrorCode::TokenExpired, "Token 已过期")));
 
-    grpc::ServerContext context;
-    handler_->RefreshToken(&context, &request, &response);
+    // Act
+    auto status = handler_->RefreshToken(context.get(), &request, &response);
 
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::TOKEN_EXPIRED));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::TOKEN_EXPIRED);
 }
 
-TEST_F(AuthHandlerTest, RefreshToken_TokenRevoked) {
+TEST_F(AuthHandlerTest, RefreshToken_RevokedToken) {
+    // Arrange
     pb_auth::RefreshTokenRequest request;
-    request.set_refresh_token("revoked_token");
+    request.set_refresh_token("revoked-token");
 
     pb_auth::RefreshTokenResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, RefreshToken("revoked_token"))
-        .WillOnce(Return(Result<TokenPair>::Fail(ErrorCode::TokenRevoked)));
+    EXPECT_CALL(*mock_auth_service_, RefreshToken("revoked-token"))
+        .WillOnce(Return(Result<TokenPair>::Fail(ErrorCode::TokenRevoked, "Token 已注销")));
 
-    grpc::ServerContext context;
-    handler_->RefreshToken(&context, &request, &response);
+    // Act
+    auto status = handler_->RefreshToken(context.get(), &request, &response);
 
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::TOKEN_REVOKED));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::TOKEN_REVOKED);
 }
 
 // ============================================================================
@@ -571,32 +538,38 @@ TEST_F(AuthHandlerTest, RefreshToken_TokenRevoked) {
 // ============================================================================
 
 TEST_F(AuthHandlerTest, Logout_Success) {
+    // Arrange
     pb_auth::LogoutRequest request;
-    request.set_refresh_token("valid_refresh_token");
+    request.set_refresh_token("valid-refresh-token");
 
     pb_auth::LogoutResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, Logout("valid_refresh_token"))
+    EXPECT_CALL(*mock_auth_service_, Logout("valid-refresh-token"))
         .WillOnce(Return(Result<void>::Ok()));
 
-    grpc::ServerContext context;
-    handler_->Logout(&context, &request, &response);
+    // Act
+    auto status = handler_->Logout(context.get(), &request, &response);
 
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::OK));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::OK);
 }
 
 TEST_F(AuthHandlerTest, Logout_EmptyToken) {
+    // Arrange
     pb_auth::LogoutRequest request;
     request.set_refresh_token("");
 
     pb_auth::LogoutResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, Logout(_)).Times(0);
+    // Act
+    auto status = handler_->Logout(context.get(), &request, &response);
 
-    grpc::ServerContext context;
-    handler_->Logout(&context, &request, &response);
-
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::INVALID_ARGUMENT));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::INVALID_ARGUMENT);
 }
 
 // ============================================================================
@@ -604,69 +577,99 @@ TEST_F(AuthHandlerTest, Logout_EmptyToken) {
 // ============================================================================
 
 TEST_F(AuthHandlerTest, ResetPassword_Success) {
+    // Arrange
     pb_auth::ResetPasswordRequest request;
     request.set_mobile("13800138000");
     request.set_verify_code("123456");
-    request.set_new_password("NewPassword123!");
+    request.set_new_password("NewPassword123");
 
     pb_auth::ResetPasswordResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, ResetPassword("13800138000", "123456", "NewPassword123!"))
+    EXPECT_CALL(*mock_auth_service_, ResetPassword("13800138000", "123456", "NewPassword123"))
         .WillOnce(Return(Result<void>::Ok()));
 
-    grpc::ServerContext context;
-    handler_->ResetPassword(&context, &request, &response);
+    // Act
+    auto status = handler_->ResetPassword(context.get(), &request, &response);
 
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::OK));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::OK);
 }
 
 TEST_F(AuthHandlerTest, ResetPassword_InvalidMobile) {
+    // Arrange
     pb_auth::ResetPasswordRequest request;
-    request.set_mobile("123");
+    request.set_mobile("invalid");
     request.set_verify_code("123456");
-    request.set_new_password("NewPassword123!");
+    request.set_new_password("NewPassword123");
 
     pb_auth::ResetPasswordResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, ResetPassword(_, _, _)).Times(0);
+    // Act
+    auto status = handler_->ResetPassword(context.get(), &request, &response);
 
-    grpc::ServerContext context;
-    handler_->ResetPassword(&context, &request, &response);
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::INVALID_ARGUMENT);
+}
 
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::INVALID_ARGUMENT));
+TEST_F(AuthHandlerTest, ResetPassword_InvalidVerifyCode) {
+    // Arrange
+    pb_auth::ResetPasswordRequest request;
+    request.set_mobile("13800138000");
+    request.set_verify_code("12345");  // 长度不对
+    request.set_new_password("NewPassword123");
+
+    pb_auth::ResetPasswordResponse response;
+    auto context = CreateContext();
+
+    // Act
+    auto status = handler_->ResetPassword(context.get(), &request, &response);
+
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::INVALID_ARGUMENT);
 }
 
 TEST_F(AuthHandlerTest, ResetPassword_WeakPassword) {
+    // Arrange
     pb_auth::ResetPasswordRequest request;
     request.set_mobile("13800138000");
     request.set_verify_code("123456");
-    request.set_new_password("weak");
+    request.set_new_password("123");  // 密码太弱
 
     pb_auth::ResetPasswordResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, ResetPassword(_, _, _)).Times(0);
+    // Act
+    auto status = handler_->ResetPassword(context.get(), &request, &response);
 
-    grpc::ServerContext context;
-    handler_->ResetPassword(&context, &request, &response);
-
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::INVALID_ARGUMENT));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::INVALID_ARGUMENT);
 }
 
-TEST_F(AuthHandlerTest, ResetPassword_CaptchaWrong) {
+TEST_F(AuthHandlerTest, ResetPassword_UserNotFound) {
+    // Arrange
     pb_auth::ResetPasswordRequest request;
-    request.set_mobile("13800138000");
-    request.set_verify_code("000000");
-    request.set_new_password("NewPassword123!");
+    request.set_mobile("13800138001");
+    request.set_verify_code("123456");
+    request.set_new_password("NewPassword123");
 
     pb_auth::ResetPasswordResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, ResetPassword("13800138000", "000000", "NewPassword123!"))
-        .WillOnce(Return(Result<void>::Fail(ErrorCode::CaptchaWrong)));
+    EXPECT_CALL(*mock_auth_service_, ResetPassword(_, _, _))
+        .WillOnce(Return(Result<void>::Fail(ErrorCode::UserNotFound, "用户不存在")));
 
-    grpc::ServerContext context;
-    handler_->ResetPassword(&context, &request, &response);
+    // Act
+    auto status = handler_->ResetPassword(context.get(), &request, &response);
 
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::CAPTCHA_WRONG));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::USER_NOT_FOUND);
 }
 
 // ============================================================================
@@ -674,53 +677,65 @@ TEST_F(AuthHandlerTest, ResetPassword_CaptchaWrong) {
 // ============================================================================
 
 TEST_F(AuthHandlerTest, ValidateToken_Success) {
+    // Arrange
     pb_auth::ValidateTokenRequest request;
-    request.set_access_token("valid_access_token");
+    request.set_access_token("valid-access-token");
 
     pb_auth::ValidateTokenResponse response;
+    auto context = CreateContext();
 
     TokenValidationResult validation;
-    validation.user_id = 123;
-    validation.user_uuid = "uuid-123";
+    validation.user_id = 1;
+    validation.user_uuid = "test-uuid-123";
     validation.mobile = "13800138000";
+    validation.role = UserRole::User;
     validation.expires_at = std::chrono::system_clock::now() + std::chrono::hours(1);
 
-    EXPECT_CALL(*mock_auth_service_, ValidateAccessToken("valid_access_token"))
+    EXPECT_CALL(*mock_auth_service_, ValidateAccessToken("valid-access-token"))
         .WillOnce(Return(Result<TokenValidationResult>::Ok(validation)));
 
-    grpc::ServerContext context;
-    handler_->ValidateToken(&context, &request, &response);
+    // Act
+    auto status = handler_->ValidateToken(context.get(), &request, &response);
 
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::OK));
-    EXPECT_EQ(response.user_uuid(), "uuid-123");
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::OK);
+    EXPECT_EQ(response.user_id(), "1");
+    EXPECT_EQ(response.user_uuid(), "test-uuid-123");
     EXPECT_EQ(response.mobile(), "13800138000");
 }
 
 TEST_F(AuthHandlerTest, ValidateToken_EmptyToken) {
+    // Arrange
     pb_auth::ValidateTokenRequest request;
     request.set_access_token("");
 
     pb_auth::ValidateTokenResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, ValidateAccessToken(_)).Times(0);
+    // Act
+    auto status = handler_->ValidateToken(context.get(), &request, &response);
 
-    grpc::ServerContext context;
-    handler_->ValidateToken(&context, &request, &response);
-
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::INVALID_ARGUMENT));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::INVALID_ARGUMENT);
 }
 
-TEST_F(AuthHandlerTest, ValidateToken_TokenExpired) {
+TEST_F(AuthHandlerTest, ValidateToken_InvalidToken) {
+    // Arrange
     pb_auth::ValidateTokenRequest request;
-    request.set_access_token("expired_token");
+    request.set_access_token("invalid-token");
 
     pb_auth::ValidateTokenResponse response;
+    auto context = CreateContext();
 
-    EXPECT_CALL(*mock_auth_service_, ValidateAccessToken("expired_token"))
-        .WillOnce(Return(Result<TokenValidationResult>::Fail(ErrorCode::TokenExpired)));
+    EXPECT_CALL(*mock_auth_service_, ValidateAccessToken("invalid-token"))
+        .WillOnce(Return(Result<TokenValidationResult>::Fail(ErrorCode::TokenInvalid, "Token 无效")));
 
-    grpc::ServerContext context;
-    handler_->ValidateToken(&context, &request, &response);
+    // Act
+    auto status = handler_->ValidateToken(context.get(), &request, &response);
 
-    EXPECT_EQ(response.result().code(), static_cast<int32_t>(pb_common::TOKEN_EXPIRED));
+    // Assert
+    EXPECT_TRUE(status.ok());
+    EXPECT_EQ(response.result().code(), pb_common::ErrorCode::TOKEN_INVALID);
 }

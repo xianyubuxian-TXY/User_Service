@@ -1,0 +1,46 @@
+# tests/config/invalid_config.yaml
+
+server:
+  host: "0.0.0.0"
+  grpc_port: -1           # 无效端口
+  metrics_port: 9090
+
+mysql:
+  host: ""                # 空主机名
+  port: 3306
+  database: ""            # 空数据库名
+  username: "root"
+  password: ""
+  pool_size: 0            # 无效池大小
+
+redis:
+  host: "localhost"
+  port: 6379
+  pool_size: -1           # 无效池大小
+
+security:
+  jwt_secret: ""          # 空密钥
+  jwt_issuer: ""          # 空签发者
+  access_token_ttl_seconds: -1    # 无效 TTL
+  refresh_token_ttl_seconds: 100  # 小于 access_token_ttl
+
+sms:
+  code_len: 0             # 无效验证码长度
+  code_ttl_seconds: -1
+  lock_seconds: 100       # 小于 code_ttl_seconds
+
+login:
+  max_failed_attempts: 0
+  captcha_after_failed_attempts: 10  # 大于 max_failed_attempts
+
+password:
+  min_length: 50
+  max_length: 10          # min > max
+
+zookeeper:
+  enabled: true
+  hosts: ""               # 空主机
+  service_name: ""        # 空服务名但 register_self=true
+  register_self: true
+  root_path: "no_slash"   # 不以 / 开头
+  weight: 0               # 无效权重

@@ -6,6 +6,8 @@
 #include <optional>
 namespace user_service {
 
+// ==================================== gRPC服务 配置 ===============================
+
 struct ServerConfig {
     std::string host = "0.0.0.0";
     int grpc_port = 50051;
@@ -13,6 +15,8 @@ struct ServerConfig {
 
     std::string ToString() const;
 };
+
+// ==================================== Mysql 配置 ===============================
 
 struct MySQLConfig {
     //基本连接信息
@@ -41,6 +45,8 @@ struct MySQLConfig {
     std::string ToString() const;
 };
 
+// ==================================== Redis 配置 ===============================
+
 struct RedisConfig {
     std::string host = "localhost";
     int port = 6379;
@@ -57,6 +63,8 @@ struct RedisConfig {
     std::string ToString() const;
 };
 
+// ==================================== Logger 配置 ===============================
+
 struct LogConfig {
     std::string level = "info";
     std::string path = "./logs";
@@ -67,6 +75,42 @@ struct LogConfig {
 
     std::string ToString() const;
 };
+
+
+// ==================================== ZooKeeper 配置 ===============================
+
+struct ZooKeeperConfig {
+    // ==================== 连接配置 ====================
+    std::string hosts = "127.0.0.1:2181";       // ZK 服务器地址，多个用逗号分隔
+                                                 // 例如: "192.168.1.10:2181,192.168.1.11:2181"
+    int session_timeout_ms = 15000;              // 会话超时（毫秒），推荐 10000-30000
+    int connect_timeout_ms = 10000;              // 连接超时（毫秒）
+    
+    // ==================== 服务注册配置（服务端使用） ====================
+    std::string root_path = "/services";         // 服务根路径
+    std::string service_name = "user-service";   // 当前服务名称
+    
+    // ==================== 开关 ====================
+    bool enabled = true;                         // 是否启用服务注册/发现
+    bool register_self = true;                   // 是否注册自身（服务端设为true，纯客户端设为false）
+    
+    // ==================== 元数据 ====================
+    int weight = 100;                            // 服务权重（负载均衡用）
+    std::string region = "";                     // 区域标识，如 "cn-east"
+    std::string zone = "";                       // 可用区，如 "zone-a"
+    std::string version = "1.0.0";               // 服务版本
+    
+    /**
+     * @brief 获取完整的服务路径
+     * @return 例如 "/services/user-service"
+     */
+    std::string GetServicePath() const {
+        return root_path + "/" + service_name;
+    }
+    
+    std::string ToString() const;
+};
+
 
 
 // ==================================== 业务相关 ===============================
@@ -149,6 +193,7 @@ struct Config {
     MySQLConfig mysql;
     RedisConfig redis;
     LogConfig log;
+    ZooKeeperConfig zookeeper;
     
     // 业务配置
     SecurityConfig security;
