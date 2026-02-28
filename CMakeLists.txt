@@ -43,15 +43,10 @@ find_library(HIREDIS_LIB hiredis)
 find_path(REDIS_PLUS_PLUS_HEADER sw)
 find_library(REDIS_PLUS_PLUS_LIB redis++)
 
-# Protobuf
-find_package(Protobuf REQUIRED)
-
 # gRPC
-pkg_check_modules(GRPC REQUIRED grpc++ grpc)
-
-# 查找 protoc 和 grpc_cpp_plugin
-find_program(PROTOC protoc REQUIRED)
-find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin REQUIRED)
+find_package(Protobuf REQUIRED)
+find_package(gRPC CONFIG REQUIRED)
+find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin)
 
 # 查找 OpenSSL（jwt_service 需要）
 find_package(OpenSSL REQUIRED)
@@ -60,22 +55,17 @@ find_package(OpenSSL REQUIRED)
 find_package(fmt REQUIRED)
 
 # Zookeeper 依赖
-find_path(ZOOKEEPER_INCLUDE_DIR zookeeper/zookeeper.h)
-find_library(ZOOKEEPER_LIBRARY zookeeper_mt)
-
-if(NOT ZOOKEEPER_INCLUDE_DIR OR NOT ZOOKEEPER_LIBRARY)
-    message(FATAL_ERROR "ZooKeeper not found. Install libzookeeper-mt-dev")
-endif()
-
-message(STATUS "Found ZooKeeper: ${ZOOKEEPER_LIBRARY}")
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(ZOOKEEPER REQUIRED zookeeper_mt)
 
 add_subdirectory(api)
 add_subdirectory(src)
 
 
 # GTest 包
+find_package(GTest REQUIRED)
 if(BUILD_TESTS)
-    find_package(GTest REQUIRED)
     enable_testing()
+    find_package(GTest CONFIG REQUIRED)
     add_subdirectory(tests)
 endif()

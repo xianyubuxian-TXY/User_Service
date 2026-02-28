@@ -1016,14 +1016,6 @@ Closes #123
 
 ---
 
-## 许可证
-
-本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
-
----
-
 ## 联系方式
-
 - 项目地址: [GitHub](https://github.com/your-repo/user-service)
-- Issue 反馈: [GitHub Issues](https://github.com/your-repo/user-service/issues)
 
